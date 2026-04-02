@@ -221,7 +221,10 @@ pub fn configure_demo_app(app: &mut App, scene: DemoScene, enhanced_input: bool)
 
 pub fn drive_keyboard_intent(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut intent: Single<&mut saddle_character_platformer_controller::PlatformerMovementIntent, With<DemoPlayer>>,
+    mut intent: Single<
+        &mut saddle_character_platformer_controller::PlatformerMovementIntent,
+        With<DemoPlayer>,
+    >,
 ) {
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);

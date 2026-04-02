@@ -2,7 +2,9 @@ mod support;
 
 use bevy::prelude::{Vec2, World};
 use saddle_bevy_e2e::{action::Action, actions::assertions, scenario::Scenario};
-use saddle_character_platformer_controller::{PlatformerJumpKind, PlatformerMotionPhase, PlatformerWallSide};
+use saddle_character_platformer_controller::{
+    PlatformerJumpKind, PlatformerMotionPhase, PlatformerWallSide,
+};
 
 use crate::LabMessageLog;
 
