@@ -194,8 +194,8 @@ fn jump_buffer_just_before_landing_fires_on_touchdown() {
         if buffered_jump.is_none() {
             buffered_jump = jump_cursor
                 .read(app.world().resource::<Messages<JumpStarted>>())
-                .cloned()
-                .last();
+                .last()
+                .cloned();
         }
         let controller = state(&app, player);
         if controller.velocity.y > 100.0 {
