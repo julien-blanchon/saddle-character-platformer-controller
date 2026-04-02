@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "support",
+    "basic",
+    "wall_jumps",
+    "moving_platforms",
+    "one_way_platforms",
+    "bevy_enhanced_input",
+    "lab",
+]
+resolver = "3"
+
+[workspace.dependencies]
+bevy = { version = "0.18", features = ["serialize"] }
+avian2d = "0.6.0-rc.1"
+bevy_enhanced_input = "0.24"
+saddle-character-platformer-controller = { path = ".." }
+
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+nonstandard_macro_braces = "warn"

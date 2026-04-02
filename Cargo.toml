@@ -1,0 +1,19 @@
+[package]
+name = "saddle-character-platformer-controller"
+version = "0.1.0"
+edition = "2024"
+publish = false
+repository = "https://github.com/julien-blanchon/saddle-character-platformer-controller"
+license = "MIT-0"
+description = "Reusable 2D platformer controller for Bevy using Avian2D"
+
+[dependencies]
+bevy = { version = "0.18", features = ["serialize"] }
+avian2d = "0.6.0-rc.1"
+
+[workspace]
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+nonstandard_macro_braces = "warn"
