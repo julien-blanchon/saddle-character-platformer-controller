@@ -101,6 +101,16 @@ pub(crate) fn wall_input_matches(side: PlatformerWallSide, move_axis: f32) -> bo
     }
 }
 
+pub(crate) fn sign_or_fallback(value: f32, fallback: f32) -> f32 {
+    if value.abs() > 0.001 {
+        value.signum()
+    } else if fallback.abs() > 0.001 {
+        fallback.signum()
+    } else {
+        1.0
+    }
+}
+
 #[cfg(test)]
 #[path = "helpers_tests.rs"]
 mod helpers_tests;

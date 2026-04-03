@@ -13,11 +13,14 @@ pub use components::{
     PlatformerOneWayPlatform, PlatformerWallContact, PlatformerWallSide,
 };
 pub use config::{
-    MoveAndSlideTuning, MovementConfig, PlatformInteractionConfig, PlatformerControllerConfig,
+    MoveAndSlideTuning, MovementConfig, PlatformInteractionConfig,
+    PlatformerControllerConfig, PlatformerCornerCorrectionConfig, PlatformerDashConfig,
     PlatformerJumpConfig, PlatformerSensingConfig, PlatformerWallConfig,
 };
 pub use debug::{PlatformerControllerDebugPlugin, PlatformerControllerDebugSettings};
-pub use messages::{AirJumpConsumed, JumpStarted, Landed, PlatformerJumpKind, WallJumpStarted};
+pub use messages::{
+    AirJumpConsumed, DashStarted, JumpStarted, Landed, PlatformerJumpKind, WallJumpStarted,
+};
 
 use bevy::{
     app::PostStartup,
@@ -30,6 +33,7 @@ pub enum PlatformerControllerSystems {
     ReadIntent,
     SenseContacts,
     ApplyMovement,
+    ApplyDash,
     ApplyJump,
     WallInteractions,
     MoveControllers,
@@ -79,6 +83,7 @@ impl Plugin for PlatformerControllerPlugin {
             .add_message::<JumpStarted>()
             .add_message::<Landed>()
             .add_message::<WallJumpStarted>()
+            .add_message::<DashStarted>()
             .add_message::<AirJumpConsumed>()
             .register_type::<MovementConfig>()
             .register_type::<MoveAndSlideTuning>()
@@ -87,7 +92,9 @@ impl Plugin for PlatformerControllerPlugin {
             .register_type::<PlatformerContact>()
             .register_type::<PlatformerController>()
             .register_type::<PlatformerControllerConfig>()
+            .register_type::<PlatformerCornerCorrectionConfig>()
             .register_type::<PlatformerControllerState>()
+            .register_type::<PlatformerDashConfig>()
             .register_type::<PlatformerJumpConfig>()
             .register_type::<PlatformerJumpKind>()
             .register_type::<PlatformerMotionPhase>()
@@ -111,6 +118,7 @@ impl Plugin for PlatformerControllerPlugin {
                     PlatformerControllerSystems::ReadIntent,
                     PlatformerControllerSystems::SenseContacts,
                     PlatformerControllerSystems::ApplyMovement,
+                    PlatformerControllerSystems::ApplyDash,
                     PlatformerControllerSystems::ApplyJump,
                     PlatformerControllerSystems::WallInteractions,
                     PlatformerControllerSystems::MoveControllers,
@@ -127,6 +135,8 @@ impl Plugin for PlatformerControllerPlugin {
                         .in_set(PlatformerControllerSystems::SenseContacts),
                     systems::movement::apply_horizontal_movement
                         .in_set(PlatformerControllerSystems::ApplyMovement),
+                    systems::movement::apply_dash
+                        .in_set(PlatformerControllerSystems::ApplyDash),
                     systems::movement::apply_jump_logic
                         .in_set(PlatformerControllerSystems::ApplyJump),
                     systems::movement::apply_wall_interactions

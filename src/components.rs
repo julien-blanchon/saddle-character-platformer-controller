@@ -13,6 +13,8 @@ pub struct PlatformerMovementIntent {
     pub jump_pressed: bool,
     pub jump_held: bool,
     pub drop_pressed: bool,
+    pub dash_pressed: bool,
+    pub dash_direction: Vec2,
 }
 
 impl Default for PlatformerMovementIntent {
@@ -22,6 +24,8 @@ impl Default for PlatformerMovementIntent {
             jump_pressed: false,
             jump_held: false,
             drop_pressed: false,
+            dash_pressed: false,
+            dash_direction: Vec2::ZERO,
         }
     }
 }
@@ -51,6 +55,7 @@ pub enum PlatformerWallSide {
 #[reflect(Debug, PartialEq, Default)]
 pub enum PlatformerMotionPhase {
     Grounded,
+    Dashing,
     Rising,
     Apex,
     Falling,
@@ -99,9 +104,12 @@ pub struct PlatformerControllerState {
     pub can_use_coyote_jump: bool,
     pub buffered_jump: bool,
     pub remaining_air_jumps: u32,
+    pub remaining_dashes: u32,
     pub coyote_time_remaining: f32,
     pub jump_buffer_remaining: f32,
     pub wall_jump_lock_remaining: f32,
+    pub dash_time_remaining: f32,
+    pub dash_cooldown_remaining: f32,
 }
 
 impl Default for PlatformerControllerState {
@@ -117,9 +125,12 @@ impl Default for PlatformerControllerState {
             can_use_coyote_jump: false,
             buffered_jump: false,
             remaining_air_jumps: 0,
+            remaining_dashes: 0,
             coyote_time_remaining: 0.0,
             jump_buffer_remaining: 0.0,
             wall_jump_lock_remaining: 0.0,
+            dash_time_remaining: 0.0,
+            dash_cooldown_remaining: 0.0,
         }
     }
 }
@@ -137,6 +148,13 @@ pub(crate) struct PendingWallJumpMessage {
     pub velocity: Vec2,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PendingDashMessage {
+    pub direction: Vec2,
+    pub velocity: Vec2,
+    pub remaining_charges: u32,
+}
+
 #[derive(Component, Clone, Debug)]
 pub(crate) struct PlatformerControllerRuntimeState {
     pub initialized: bool,
@@ -146,8 +164,13 @@ pub(crate) struct PlatformerControllerRuntimeState {
     pub wall_jump_lock_remaining: f32,
     pub drop_through_remaining: f32,
     pub remaining_air_jumps: u32,
+    pub remaining_dashes: u32,
     pub support_velocity: Vec2,
     pub support_position: Option<Vec2>,
+    pub dash_time_remaining: f32,
+    pub dash_cooldown_remaining: f32,
+    pub dash_direction: Vec2,
+    pub facing_sign: f32,
     pub last_support_entity: Option<Entity>,
     pub last_support_position: Option<Vec2>,
     pub pre_ground: Option<PlatformerContact>,
@@ -158,6 +181,7 @@ pub(crate) struct PlatformerControllerRuntimeState {
     pub right_wall: Option<PlatformerContact>,
     pub pending_jump: Option<PendingJumpMessage>,
     pub pending_wall_jump: Option<PendingWallJumpMessage>,
+    pub pending_dash: Option<PendingDashMessage>,
     pub pending_landed_impact_speed: Option<f32>,
     pub pending_landed_support: Option<Entity>,
     pub pending_air_jump_consumed: Option<u32>,
@@ -173,8 +197,13 @@ impl Default for PlatformerControllerRuntimeState {
             wall_jump_lock_remaining: 0.0,
             drop_through_remaining: 0.0,
             remaining_air_jumps: 0,
+            remaining_dashes: 0,
             support_velocity: Vec2::ZERO,
             support_position: None,
+            dash_time_remaining: 0.0,
+            dash_cooldown_remaining: 0.0,
+            dash_direction: Vec2::X,
+            facing_sign: 1.0,
             last_support_entity: None,
             last_support_position: None,
             pre_ground: None,
@@ -185,6 +214,7 @@ impl Default for PlatformerControllerRuntimeState {
             right_wall: None,
             pending_jump: None,
             pending_wall_jump: None,
+            pending_dash: None,
             pending_landed_impact_speed: None,
             pending_landed_support: None,
             pending_air_jump_consumed: None,
@@ -197,6 +227,7 @@ pub(crate) fn runtime_from_config(
 ) -> PlatformerControllerRuntimeState {
     PlatformerControllerRuntimeState {
         remaining_air_jumps: config.jump.max_air_jumps,
+        remaining_dashes: config.dash.max_charges,
         ..default()
     }
 }

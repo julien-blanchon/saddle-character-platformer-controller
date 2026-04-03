@@ -6,7 +6,7 @@ use saddle_character_platformer_controller_example_support as support;
 
 use bevy::prelude::*;
 use saddle_character_platformer_controller::{
-    AirJumpConsumed, JumpStarted, Landed, PlatformerControllerDebugPlugin,
+    AirJumpConsumed, DashStarted, JumpStarted, Landed, PlatformerControllerDebugPlugin,
     PlatformerControllerDebugSettings, PlatformerControllerSystems, PlatformerJumpKind,
     PlatformerMovementIntent, PlatformerWallSide, WallJumpStarted,
 };
@@ -21,6 +21,7 @@ pub struct ScriptedControl {
     pub move_axis: f32,
     pub jump_held: bool,
     pub jump_pressed: bool,
+    pub dash_pressed: bool,
     pub drop_pressed: bool,
 }
 
@@ -31,6 +32,10 @@ pub struct LabMessageLog {
     pub last_jump_kind: Option<PlatformerJumpKind>,
     pub last_jump_used_buffer: bool,
     pub last_jump_velocity: Vec2,
+    pub dash_count: u32,
+    pub last_dash_direction: Option<Vec2>,
+    pub last_dash_velocity: Vec2,
+    pub last_dash_remaining_charges: Option<u32>,
     pub wall_jump_count: u32,
     pub last_wall_jump_side: Option<PlatformerWallSide>,
     pub last_wall_jump_velocity: Vec2,
@@ -84,6 +89,7 @@ fn main() {
             support::drive_keyboard_intent.in_set(DemoFixedSystems::DriveIntent),
             apply_scripted_control.in_set(LabFixedSystems::ScriptedIntent),
             record_jump_messages.in_set(LabFixedSystems::ObserveMessages),
+            record_dash_messages.in_set(LabFixedSystems::ObserveMessages),
             record_wall_jump_messages.in_set(LabFixedSystems::ObserveMessages),
             record_landed_messages.in_set(LabFixedSystems::ObserveMessages),
             record_air_jump_messages.in_set(LabFixedSystems::ObserveMessages),
@@ -145,6 +151,11 @@ fn apply_scripted_control(
         scripted.jump_pressed = false;
     }
 
+    if scripted.dash_pressed {
+        intent.dash_pressed = true;
+        scripted.dash_pressed = false;
+    }
+
     if scripted.drop_pressed {
         intent.drop_pressed = true;
         scripted.drop_pressed = false;
@@ -157,6 +168,15 @@ fn record_jump_messages(mut log: ResMut<LabMessageLog>, mut messages: MessageRea
         log.last_jump_kind = Some(message.kind);
         log.last_jump_used_buffer = message.used_buffer;
         log.last_jump_velocity = message.velocity;
+    }
+}
+
+fn record_dash_messages(mut log: ResMut<LabMessageLog>, mut messages: MessageReader<DashStarted>) {
+    for message in messages.read() {
+        log.dash_count += 1;
+        log.last_dash_direction = Some(message.direction);
+        log.last_dash_velocity = message.velocity;
+        log.last_dash_remaining_charges = Some(message.remaining_charges);
     }
 }
 

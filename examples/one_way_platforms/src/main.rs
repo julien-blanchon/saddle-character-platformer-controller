@@ -7,6 +7,7 @@ use support::{DemoFixedSystems, DemoScene};
 fn main() -> AppExit {
     let mut app = App::new();
     support::configure_demo_app(&mut app, DemoScene::OneWayPlatforms, false);
+    support::install_pane(&mut app);
     app.add_systems(
         FixedUpdate,
         support::drive_keyboard_intent.in_set(DemoFixedSystems::DriveIntent),

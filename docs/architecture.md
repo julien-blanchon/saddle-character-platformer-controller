@@ -19,16 +19,18 @@ The runtime exposes explicit phases through `PlatformerControllerSystems`:
 1. `ReadIntent`
 2. `SenseContacts`
 3. `ApplyMovement`
-4. `ApplyJump`
-5. `WallInteractions`
-6. `MoveControllers`
-7. `SyncState`
+4. `ApplyDash`
+5. `ApplyJump`
+6. `WallInteractions`
+7. `MoveControllers`
+8. `SyncState`
 
 The order is intentional:
 
 - `ReadIntent` snapshots buffered player intent and decrements timers once per frame
 - `SenseContacts` samples the pre-move world state for coyote time, wall validity, and support motion
 - `ApplyMovement` resolves horizontal acceleration against the current support policy
+- `ApplyDash` converts dash intent into a temporary authored movement phase before jump/gravity logic runs
 - `ApplyJump` resolves jump buffering, coyote jumps, air jumps, gravity shaping, and wall-jump launch
 - `WallInteractions` applies slide-specific downward clamping after the jump logic has finalized vertical intent
 - `MoveControllers` performs the actual `MoveAndSlide` step and re-probes the world after movement
@@ -74,6 +76,8 @@ Forgiveness timers are tracked in runtime state:
 - `coyote_time_remaining`
 - `wall_jump_lock_remaining`
 - `drop_through_remaining`
+- `dash_time_remaining`
+- `dash_cooldown_remaining`
 
 These timers are intentionally internal bookkeeping. Consumers observe the distilled public state component instead of manipulating timer internals directly.
 
@@ -93,6 +97,18 @@ Support velocity is derived in two ways:
 - otherwise infer velocity from successive `Position` samples of the same support entity
 
 The controller stores the last support entity and its last sampled position so kinematic platforms can still contribute useful motion.
+
+## Dash Model
+
+Dash intent is handled as a dedicated authored phase rather than as a one-frame impulse.
+
+- dash direction prefers the explicit `dash_direction` vector when it exceeds `direction_input_threshold`
+- otherwise the runtime falls back to horizontal movement input, current lateral velocity, and finally the last facing sign
+- each dash consumes one authored charge from `remaining_dashes`
+- grounded contact can optionally refill those charges immediately through `dash.refill_on_ground`
+- while `dash_time_remaining > 0`, horizontal movement, jump resolution, and wall-slide clamping all yield to the dash velocity
+
+This keeps dash behavior deterministic and easy to test while still leaving the input source fully game-defined.
 
 ## One-Way Platform Policy
 
@@ -132,9 +148,13 @@ During the steering lock window, horizontal input is blended by `wall_jump_steer
 
 ## Corner Correction
 
-Explicit corner correction / head-bonk forgiveness is currently deferred.
+Corner correction is applied inside the movement step rather than as a separate teleporting hack.
 
-The existing runtime already gains some incidental forgiveness from shape casts and `MoveAndSlide`, but it does not perform a dedicated “nudge around the ceiling lip” correction like Celeste-style controllers often do. That absence is deliberate until the feature can be added cleanly without turning the solver into a pile of special cases.
+- after the initial `MoveAndSlide` pass, the runtime detects upward head-bonks that stripped too much vertical motion
+- it then retries the same move from small sideways offsets, using `corner_correction.step_size` up to `corner_correction.max_distance`
+- a retry is accepted only if it produces a meaningful height gain (`min_height_gain`)
+
+This approach keeps the crate grounded in Avian's solver while still giving platformer-style “ceiling lip forgiveness” when a jump barely clips an edge.
 
 ## Debug Strategy
 
@@ -151,6 +171,7 @@ The public `PlatformerControllerState` also mirrors the important derived facts 
 - support entity and support velocity
 - buffered jump status
 - remaining air jumps
+- remaining dash charges and dash timers
 - current wall contact
 
 ## Determinism Notes
@@ -168,4 +189,3 @@ Not yet guaranteed:
 - bit-for-bit cross-platform determinism
 - rollback/prediction serialization helpers
 - arbitrary gravity or custom collision-backend portability
-

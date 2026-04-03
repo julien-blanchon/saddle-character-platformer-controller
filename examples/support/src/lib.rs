@@ -7,6 +7,7 @@ use saddle_character_platformer_controller::{
     PlatformerControllerPlugin, PlatformerControllerState, PlatformerControllerSystems,
     PlatformerMotionPhase, PlatformerOneWayPlatform, PlatformerWallSide,
 };
+use saddle_pane::prelude::*;
 
 pub const PLAYER_SIZE: Vec2 = Vec2::new(18.0, 30.0);
 
@@ -145,6 +146,87 @@ pub struct DemoState {
     pub enhanced_input: bool,
 }
 
+#[derive(Resource, Debug, Clone, PartialEq, Pane)]
+#[pane(title = "Platformer", position = "top-right")]
+pub struct ExamplePlatformerPane {
+    #[pane(slider, min = 120.0, max = 360.0, step = 1.0)]
+    pub max_speed: f32,
+    #[pane(slider, min = 40.0, max = 140.0, step = 1.0)]
+    pub jump_height: f32,
+    #[pane(slider, min = 0.2, max = 0.8, step = 0.01)]
+    pub time_to_apex: f32,
+    #[pane(slider, min = 0.0, max = 0.25, step = 0.01)]
+    pub coyote_time: f32,
+    #[pane(slider, min = 0.0, max = 0.25, step = 0.01)]
+    pub jump_buffer_time: f32,
+    #[pane(slider, min = 0.0, max = 140.0, step = 1.0)]
+    pub dash_distance: f32,
+    #[pane(slider, min = 0.05, max = 0.4, step = 0.01)]
+    pub dash_duration: f32,
+    #[pane(slider, min = 0.0, max = 0.5, step = 0.01)]
+    pub dash_cooldown: f32,
+    pub allow_ground_dash: bool,
+    #[pane(slider, min = 2.0, max = 16.0, step = 0.25)]
+    pub camera_smoothing: f32,
+    #[pane(monitor)]
+    pub player_x: f32,
+    #[pane(monitor)]
+    pub player_y: f32,
+    #[pane(monitor)]
+    pub velocity_x: f32,
+    #[pane(monitor)]
+    pub velocity_y: f32,
+    #[pane(monitor)]
+    pub grounded: bool,
+    #[pane(monitor)]
+    pub remaining_air_jumps: f32,
+    #[pane(monitor)]
+    pub phase: String,
+}
+
+impl Default for ExamplePlatformerPane {
+    fn default() -> Self {
+        Self {
+            max_speed: 220.0,
+            jump_height: 78.0,
+            time_to_apex: 0.42,
+            coyote_time: 0.1,
+            jump_buffer_time: 0.12,
+            dash_distance: 84.0,
+            dash_duration: 0.16,
+            dash_cooldown: 0.12,
+            allow_ground_dash: true,
+            camera_smoothing: 8.0,
+            player_x: 0.0,
+            player_y: 0.0,
+            velocity_x: 0.0,
+            velocity_y: 0.0,
+            grounded: false,
+            remaining_air_jumps: 0.0,
+            phase: "Grounded".to_string(),
+        }
+    }
+}
+
+impl ExamplePlatformerPane {
+    fn from_scene(scene: DemoScene) -> Self {
+        let config = scene.controller_config();
+        Self {
+            max_speed: config.movement.max_speed,
+            jump_height: config.jump.height,
+            time_to_apex: config.jump.time_to_apex,
+            coyote_time: config.jump.coyote_time,
+            jump_buffer_time: config.jump.jump_buffer_time,
+            dash_distance: config.dash.distance,
+            dash_duration: config.dash.duration,
+            dash_cooldown: config.dash.cooldown,
+            allow_ground_dash: config.dash.allow_ground_dash,
+            camera_smoothing: 8.0,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Resource, Reflect, Default, Debug, Clone)]
 #[reflect(Resource, Debug, Default)]
 pub struct DemoDiagnostics {
@@ -168,6 +250,9 @@ pub struct DemoDiagnostics {
 #[derive(Resource)]
 struct AutoExitTimer(Timer);
 
+#[derive(Resource, Clone, Copy)]
+struct ExamplePlatformerPaneBootstrap(DemoScene);
+
 pub fn configure_demo_app(app: &mut App, scene: DemoScene, enhanced_input: bool) {
     app.insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)));
     app.insert_resource(Time::<Fixed>::from_hz(60.0));
@@ -176,6 +261,7 @@ pub fn configure_demo_app(app: &mut App, scene: DemoScene, enhanced_input: bool)
         enhanced_input,
     });
     app.insert_resource(DemoDiagnostics::default());
+    app.insert_resource(ExamplePlatformerPaneBootstrap(scene));
     app.register_type::<DemoScene>()
         .register_type::<DemoCamera>()
         .register_type::<DemoDiagnostics>()
@@ -219,6 +305,28 @@ pub fn configure_demo_app(app: &mut App, scene: DemoScene, enhanced_input: bool)
     }
 }
 
+pub fn install_pane(app: &mut App) {
+    if !app.is_plugin_added::<PanePlugin>() {
+        app.add_plugins((
+            bevy_flair::FlairPlugin,
+            bevy_input_focus::InputDispatchPlugin,
+            bevy_ui_widgets::UiWidgetsPlugins,
+            bevy_input_focus::tab_navigation::TabNavigationPlugin,
+            PanePlugin,
+        ));
+    }
+
+    app.register_pane::<ExamplePlatformerPane>().add_systems(
+        Update,
+        (
+            apply_bootstrapped_pane,
+            sync_platformer_pane,
+            update_platformer_pane_monitors,
+        )
+            .chain(),
+    );
+}
+
 pub fn drive_keyboard_intent(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut intent: Single<
@@ -232,7 +340,56 @@ pub fn drive_keyboard_intent(
     intent.move_axis = right as i8 as f32 - left as i8 as f32;
     intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
     intent.jump_held = keyboard.pressed(KeyCode::Space);
+    intent.dash_pressed = keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+}
+
+fn apply_bootstrapped_pane(
+    bootstrap: Option<Res<ExamplePlatformerPaneBootstrap>>,
+    mut pane: ResMut<ExamplePlatformerPane>,
+) {
+    let Some(bootstrap) = bootstrap else {
+        return;
+    };
+
+    if *pane == ExamplePlatformerPane::default() {
+        *pane = ExamplePlatformerPane::from_scene(bootstrap.0);
+    }
+}
+
+fn sync_platformer_pane(
+    pane: Res<ExamplePlatformerPane>,
+    mut controllers: Query<&mut PlatformerControllerConfig, With<DemoPlayer>>,
+    mut cameras: Query<&mut DemoCamera>,
+) {
+    for mut config in &mut controllers {
+        config.movement.max_speed = pane.max_speed.max(0.0);
+        config.jump.height = pane.jump_height.max(0.0);
+        config.jump.time_to_apex = pane.time_to_apex.max(0.01);
+        config.jump.coyote_time = pane.coyote_time.max(0.0);
+        config.jump.jump_buffer_time = pane.jump_buffer_time.max(0.0);
+        config.dash.distance = pane.dash_distance.max(0.0);
+        config.dash.duration = pane.dash_duration.max(0.01);
+        config.dash.cooldown = pane.dash_cooldown.max(0.0);
+        config.dash.allow_ground_dash = pane.allow_ground_dash;
+    }
+
+    for mut camera in &mut cameras {
+        camera.smoothing = pane.camera_smoothing.max(0.1);
+    }
+}
+
+fn update_platformer_pane_monitors(
+    diagnostics: Res<DemoDiagnostics>,
+    mut pane: ResMut<ExamplePlatformerPane>,
+) {
+    pane.player_x = diagnostics.player_position.x;
+    pane.player_y = diagnostics.player_position.y;
+    pane.velocity_x = diagnostics.player_velocity.x;
+    pane.velocity_y = diagnostics.player_velocity.y;
+    pane.grounded = diagnostics.grounded;
+    pane.remaining_air_jumps = diagnostics.remaining_air_jumps as f32;
+    pane.phase = format!("{:?}", diagnostics.phase);
 }
 
 fn setup_scene(
@@ -492,6 +649,7 @@ fn follow_camera(
 fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), With<DemoPlayer>>) {
     player.1.color = match player.0.phase {
         PlatformerMotionPhase::Grounded => Color::srgb(0.94, 0.58, 0.22),
+        PlatformerMotionPhase::Dashing => Color::srgb(0.98, 0.28, 0.48),
         PlatformerMotionPhase::Rising => Color::srgb(0.98, 0.82, 0.30),
         PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
         PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),

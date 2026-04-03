@@ -2,8 +2,9 @@ use avian2d::prelude::LinearVelocity;
 use bevy::prelude::*;
 
 use crate::{
-    AirJumpConsumed, JumpStarted, Landed, PlatformerController, PlatformerControllerConfig,
-    PlatformerControllerState, PlatformerMotionPhase, PlatformerMovementIntent, WallJumpStarted,
+    AirJumpConsumed, DashStarted, JumpStarted, Landed, PlatformerController,
+    PlatformerControllerConfig, PlatformerControllerState, PlatformerMotionPhase,
+    PlatformerMovementIntent, WallJumpStarted,
     components::PlatformerControllerRuntimeState,
     helpers::{wall_contact_from_hits, wall_input_matches},
 };
@@ -39,10 +40,15 @@ pub(crate) fn sync_controller_state(
         state.can_use_coyote_jump = !is_grounded && runtime.coyote_time_remaining > 0.0;
         state.buffered_jump = runtime.jump_buffer_remaining > 0.0;
         state.remaining_air_jumps = runtime.remaining_air_jumps;
+        state.remaining_dashes = runtime.remaining_dashes;
         state.coyote_time_remaining = runtime.coyote_time_remaining;
         state.jump_buffer_remaining = runtime.jump_buffer_remaining;
         state.wall_jump_lock_remaining = runtime.wall_jump_lock_remaining;
-        state.phase = if is_grounded {
+        state.dash_time_remaining = runtime.dash_time_remaining;
+        state.dash_cooldown_remaining = runtime.dash_cooldown_remaining;
+        state.phase = if runtime.dash_time_remaining > 0.0 {
+            PlatformerMotionPhase::Dashing
+        } else if is_grounded {
             PlatformerMotionPhase::Grounded
         } else if wall_sliding {
             PlatformerMotionPhase::WallSliding
@@ -68,6 +74,7 @@ pub(crate) fn emit_messages(
     mut query: Query<(Entity, &mut PlatformerControllerRuntimeState), With<PlatformerController>>,
     mut jump_started: MessageWriter<JumpStarted>,
     mut wall_jump_started: MessageWriter<WallJumpStarted>,
+    mut dash_started: MessageWriter<DashStarted>,
     mut landed: MessageWriter<Landed>,
     mut air_jump_consumed: MessageWriter<AirJumpConsumed>,
 ) {
@@ -86,6 +93,15 @@ pub(crate) fn emit_messages(
                 entity,
                 side: pending_wall_jump.side,
                 velocity: pending_wall_jump.velocity,
+            });
+        }
+
+        if let Some(pending_dash) = runtime.pending_dash.take() {
+            dash_started.write(DashStarted {
+                entity,
+                direction: pending_dash.direction,
+                velocity: pending_dash.velocity,
+                remaining_charges: pending_dash.remaining_charges,
             });
         }
 

@@ -22,6 +22,7 @@ pub fn list_scenarios() -> Vec<&'static str> {
         "platformer_controller_smoke",
         "platformer_controller_coyote_jump",
         "platformer_controller_jump_buffer",
+        "platformer_controller_dash",
         "platformer_controller_wall_jump",
         "platformer_controller_moving_platform",
         "platformer_controller_one_way",
@@ -33,6 +34,7 @@ pub fn scenario_by_name(name: &str) -> Option<Scenario> {
         "platformer_controller_smoke" => Some(platformer_controller_smoke()),
         "platformer_controller_coyote_jump" => Some(platformer_controller_coyote_jump()),
         "platformer_controller_jump_buffer" => Some(platformer_controller_jump_buffer()),
+        "platformer_controller_dash" => Some(platformer_controller_dash()),
         "platformer_controller_wall_jump" => Some(platformer_controller_wall_jump()),
         "platformer_controller_moving_platform" => Some(platformer_controller_moving_platform()),
         "platformer_controller_one_way" => Some(platformer_controller_one_way()),
@@ -73,7 +75,7 @@ fn platformer_controller_coyote_jump() -> Scenario {
         .description("Walk off a ledge in the basic scene, jump during the coyote window, and verify the jump is classified correctly.")
         .then(Action::Custom(Box::new(|world| {
             support::teleport_player(world, Vec2::new(-36.0, -57.0), Vec2::ZERO);
-            support::set_scripted_control(world, 1.0, false, false, false);
+            support::set_scripted_control(world, 1.0, false, false, false, false);
         })))
         .then(Action::WaitFrames(8))
         .then(Action::Screenshot("coyote_setup".into()))
@@ -86,7 +88,7 @@ fn platformer_controller_coyote_jump() -> Scenario {
             max_frames: 90,
         })
         .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 1.0, true, true, false);
+            support::set_scripted_control(world, 1.0, true, true, false, false);
         })))
         .then(Action::WaitUntil {
             label: "coyote jump launched".into(),
@@ -130,7 +132,7 @@ fn platformer_controller_jump_buffer() -> Scenario {
                 Vec2::new(0.0, -220.0),
                 config,
             );
-            support::set_scripted_control(world, 0.0, false, false, false);
+            support::set_scripted_control(world, 0.0, false, false, false, false);
         })))
         .then(Action::WaitUntil {
             label: "pre-landing fall".into(),
@@ -144,7 +146,7 @@ fn platformer_controller_jump_buffer() -> Scenario {
         })
         .then(Action::Screenshot("jump_buffer_fall".into()))
         .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, true, true, false);
+            support::set_scripted_control(world, 0.0, true, true, false, false);
         })))
         .then(Action::WaitUntil {
             label: "buffered jump fired".into(),
@@ -177,12 +179,74 @@ fn platformer_controller_jump_buffer() -> Scenario {
         .build()
 }
 
+fn platformer_controller_dash() -> Scenario {
+    Scenario::builder("platformer_controller_dash")
+        .description(
+            "Trigger a grounded dash across the starter lane, verify the dash message and motion phase, then capture both the burst and the cooldown recovery.",
+        )
+        .then(Action::Custom(Box::new(|world| {
+            support::teleport_player(world, Vec2::new(-220.0, -57.0), Vec2::ZERO);
+            support::set_scripted_control(world, 1.0, false, false, true, false);
+        })))
+        .then(Action::WaitUntil {
+            label: "dash started".into(),
+            condition: Box::new(|world| {
+                let diagnostics = world.resource::<support::DiagnosticsResource>();
+                let log = world.resource::<LabMessageLog>();
+                log.dash_count >= 1
+                    && diagnostics.phase == PlatformerMotionPhase::Dashing
+                    && diagnostics.player_velocity.x > 400.0
+            }),
+            max_frames: 30,
+        })
+        .then(hard_assert("dash entered burst phase", |world| {
+            let diagnostics = world.resource::<support::DiagnosticsResource>();
+            let log = world.resource::<LabMessageLog>();
+            log.dash_count >= 1
+                && diagnostics.phase == PlatformerMotionPhase::Dashing
+                && diagnostics.player_velocity.x > 400.0
+        }))
+        .then(assertions::custom("dash message kept the forward launch vector", |world| {
+            let log = world.resource::<LabMessageLog>();
+            log.last_dash_direction
+                .is_some_and(|direction| direction.x > 0.95 && direction.y.abs() < 0.01)
+                && log.last_dash_velocity.x > 400.0
+                && log.last_dash_remaining_charges == Some(0)
+        }))
+        .then(Action::Screenshot("dash_launch".into()))
+        .then(Action::WaitFrames(1))
+        .then(Action::Custom(Box::new(|world| {
+            support::set_scripted_control(world, 0.0, false, false, false, false);
+        })))
+        .then(Action::WaitUntil {
+            label: "dash recovered".into(),
+            condition: Box::new(|world| {
+                let diagnostics = world.resource::<support::DiagnosticsResource>();
+                let log = world.resource::<LabMessageLog>();
+                log.dash_count >= 1
+                    && diagnostics.phase != PlatformerMotionPhase::Dashing
+                    && diagnostics.player_velocity.x.abs() < 240.0
+            }),
+            max_frames: 80,
+        })
+        .then(assertions::custom("dash burst finished and returned to normal motion", |world| {
+            let diagnostics = world.resource::<support::DiagnosticsResource>();
+            let log = world.resource::<LabMessageLog>();
+            log.dash_count >= 1
+                && diagnostics.phase != PlatformerMotionPhase::Dashing
+                && diagnostics.player_velocity.x.abs() < 240.0
+        }))
+        .then(assertions::log_summary("platformer_controller_dash summary"))
+        .then(Action::Screenshot("dash_recovered".into()))
+        .build()
+}
+
 fn platformer_controller_wall_jump() -> Scenario {
     Scenario::builder("platformer_controller_wall_jump")
         .description("Enter a valid wall slide in the shaft, then jump away and verify the wall-jump side and launch vector.")
         .then(Action::Custom(Box::new(|world| {
             support::teleport_player(world, Vec2::new(-92.0, 36.0), Vec2::new(0.0, -20.0));
-            support::set_scripted_control(world, -1.0, false, false, false);
+            support::set_scripted_control(world, -1.0, false, false, false, false);
         })))
         .then(Action::WaitUntil {
             label: "wall sliding".into(),
@@ -194,7 +258,7 @@ fn platformer_controller_wall_jump() -> Scenario {
         })
         .then(Action::Screenshot("wall_slide".into()))
         .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, -1.0, true, true, false);
+            support::set_scripted_control(world, -1.0, true, true, false, false);
         })))
         .then(Action::WaitUntil {
             label: "wall jump launched".into(),
@@ -231,7 +295,7 @@ fn platformer_controller_moving_platform() -> Scenario {
         .description("Ride the moving platform long enough to inherit support motion, then jump and verify horizontal carry-through.")
         .then(Action::Custom(Box::new(|world| {
             support::teleport_player(world, Vec2::new(-40.0, 4.0), Vec2::ZERO);
-            support::set_scripted_control(world, 0.0, false, false, false);
+            support::set_scripted_control(world, 0.0, false, false, false, false);
         })))
         .then(Action::WaitUntil {
             label: "standing on moving platform".into(),
@@ -250,7 +314,7 @@ fn platformer_controller_moving_platform() -> Scenario {
             support::player_state(world).is_some_and(|state| state.support_entity.is_some())
         }))
         .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, true, true, false);
+            support::set_scripted_control(world, 0.0, true, true, false, false);
         })))
         .then(Action::WaitUntil {
             label: "platform jump launched".into(),
@@ -277,7 +341,7 @@ fn platformer_controller_one_way() -> Scenario {
         .description("Jump up through a one-way platform, land on it, then drop back through it with explicit input.")
         .then(Action::Custom(Box::new(|world| {
             support::teleport_player(world, Vec2::new(-110.0, -116.0), Vec2::ZERO);
-            support::set_scripted_control(world, 0.0, true, true, false);
+            support::set_scripted_control(world, 0.0, true, true, false, false);
         })))
         .then(Action::WaitUntil {
             label: "landed on one-way platform".into(),
@@ -294,7 +358,7 @@ fn platformer_controller_one_way() -> Scenario {
             support::player_state(world).is_some_and(|state| state.support_entity.is_some())
         }))
         .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, false, false, true);
+            support::set_scripted_control(world, 0.0, false, false, false, true);
         })))
         .then(Action::WaitUntil {
             label: "fell through one-way platform".into(),

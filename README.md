@@ -41,11 +41,11 @@ fn main() {
 }
 
 fn setup(mut commands: Commands) {
-commands.spawn((
-    Name::new("Player"),
-    PlatformerControllerBundle::new(Collider::rectangle(18.0, 30.0))
-        .with_transform(Transform::from_xyz(0.0, 40.0, 0.0)),
-));
+    commands.spawn((
+        Name::new("Player"),
+        PlatformerControllerBundle::new(Collider::rectangle(18.0, 30.0))
+            .with_transform(Transform::from_xyz(0.0, 40.0, 0.0)),
+    ));
 
     commands.spawn((
         Name::new("Ground"),
@@ -63,14 +63,14 @@ Populate `PlatformerMovementIntent` from keyboard input, `bevy_enhanced_input`, 
 | Type | Purpose |
 | --- | --- |
 | `PlatformerControllerPlugin` | Registers the runtime with injectable `activate`, `deactivate`, and `update` schedules |
-| `PlatformerControllerSystems` | Public ordering hooks: `ReadIntent`, `SenseContacts`, `ApplyMovement`, `ApplyJump`, `WallInteractions`, `MoveControllers`, `SyncState` |
+| `PlatformerControllerSystems` | Public ordering hooks: `ReadIntent`, `SenseContacts`, `ApplyMovement`, `ApplyDash`, `ApplyJump`, `WallInteractions`, `MoveControllers`, `SyncState` |
 | `PlatformerControllerBundle` | Minimal spawn bundle for a kinematic controller entity |
-| `PlatformerControllerConfig` | Gameplay-facing tuning for movement, jumps, walls, sensing, platform interaction, and `MoveAndSlide` |
-| `PlatformerMovementIntent` | Generic input boundary: horizontal axis, jump press/hold, and drop-through press |
-| `PlatformerControllerState` | Readable runtime state: grounded/wall contacts, phase, buffered jump status, support motion, and remaining air jumps |
+| `PlatformerControllerConfig` | Gameplay-facing tuning for movement, jumps, dash, corner correction, walls, sensing, platform interaction, and `MoveAndSlide` |
+| `PlatformerMovementIntent` | Generic input boundary: horizontal axis, jump press/hold, dash press/direction, and drop-through press |
+| `PlatformerControllerState` | Readable runtime state: grounded/wall contacts, phase, forgiveness timers, support motion, remaining air jumps, and remaining dash charges |
 | `PlatformerOneWayPlatform` | Marker for jump-through platforms |
 | `PlatformerControllerDebugPlugin` | Optional gizmo-based debug overlay for probes and velocity |
-| Messages | `JumpStarted`, `Landed`, `WallJumpStarted`, `AirJumpConsumed` |
+| Messages | `JumpStarted`, `DashStarted`, `Landed`, `WallJumpStarted`, `AirJumpConsumed` |
 
 ## Movement Scope
 
@@ -82,8 +82,10 @@ Supported in `0.1.0`:
 - Coyote time
 - Jump buffering
 - Configurable air jumps (`max_air_jumps`)
+- Directional dash with configurable charges, cooldown, and grounded refill policy
 - Wall slide with contact filtering and terminal speed clamp
 - Wall jump with tunable launch and steering lock window
+- Ceiling-lip corner correction / head-bonk forgiveness
 - Walkable-slope filtering via `max_walkable_angle`
 - Moving-platform support with configurable velocity inheritance
 - One-way / jump-through platforms with explicit drop-through input
@@ -91,7 +93,6 @@ Supported in `0.1.0`:
 
 Currently deferred:
 
-- Explicit corner-correction / head-bonk forgiveness
 - Buffered wall jump as a separate mechanic
 - Runtime config blending helpers for powerups or biome variants
 - Built-in animation-state or FX binding helpers beyond the public state/messages
@@ -127,6 +128,8 @@ app.configure_sets(
 
 - `movement.*` controls lateral feel: top speed, acceleration, deceleration, and apex air control.
 - `jump.*` controls arc shape and forgiveness: apex time, gravity multipliers, coyote time, jump buffering, and extra jumps.
+- `dash.*` controls burst traversal: dash distance, duration, cooldown, charge count, and grounded refill behavior.
+- `corner_correction.*` controls how aggressively the controller retries around ceiling lips after an upward bonk.
 - `walls.*` controls wall validity, slide drag, jump launch, and post-wall-jump steering.
 - `sensing.*` controls walkable-angle classification, probe distance, and one-way platform filtering.
 - `platforms.*` controls support-velocity inheritance and drop-through duration.
@@ -136,6 +139,8 @@ See [Configuration](docs/configuration.md) for the full parameter reference.
 
 ## Examples
 
+Every shipped example now includes `saddle-pane` controls for the main movement and camera tuning knobs.
+
 | Example | Purpose | Run |
 | --- | --- | --- |
 | `basic` | Minimal direct-intent demo with ground movement, coyote time, and double jump | `cargo run -p saddle-character-platformer-controller-example-basic` |
@@ -143,6 +148,7 @@ See [Configuration](docs/configuration.md) for the full parameter reference.
 | `moving_platforms` | Support motion inheritance on kinematic platforms | `cargo run -p saddle-character-platformer-controller-example-moving-platforms` |
 | `one_way_platforms` | Jump-through floors and drop-through input | `cargo run -p saddle-character-platformer-controller-example-one-way-platforms` |
 | `bevy_enhanced_input` | Optional `bevy_enhanced_input` adapter feeding `PlatformerMovementIntent` | `cargo run -p saddle-character-platformer-controller-example-bevy-enhanced-input` |
+| `full_demo` | Cross-crate 2D platformer showcase: controller + spritesheet + sprite effects + parallax + pixel camera | `cargo run -p saddle-character-platformer-controller-example-full-demo` |
 
 ## Crate-Local Lab
 
@@ -151,6 +157,7 @@ The crate also ships a lab app with BRP and targeted E2E scenarios:
 ```bash
 cargo run -p saddle-character-platformer-controller-lab
 cargo run -p saddle-character-platformer-controller-lab --features e2e -- platformer_controller_smoke
+cargo run -p saddle-character-platformer-controller-lab --features e2e -- platformer_controller_dash
 ```
 
 The lab overlays support velocity, support entity, and forgiveness timers so screenshots and BRP inspection expose the same state that the crate-local scenarios assert against.
@@ -165,7 +172,6 @@ See [examples/lab/README.md](examples/lab/README.md) for the lab workflow.
 
 ## Known Limitations
 
-- Corner correction and head-bonk forgiveness are not implemented yet.
 - The controller assumes a global `Vec2::Y` up-axis; arbitrary gravity directions are out of scope.
 - One-way platform behavior is optimized for upward-facing platforms and does not attempt arbitrary rotated ghost-platform semantics.
 - Moving-platform support derives velocity from `LinearVelocity` when available, otherwise from successive `Position` samples; discontinuous teleports of support bodies will still feel discontinuous.

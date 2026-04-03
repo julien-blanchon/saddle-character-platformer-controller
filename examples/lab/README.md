@@ -26,6 +26,7 @@ cargo run -p saddle-character-platformer-controller-lab
 cargo run -p saddle-character-platformer-controller-lab --features e2e -- platformer_controller_smoke
 cargo run -p saddle-character-platformer-controller-lab --features e2e -- platformer_controller_coyote_jump
 cargo run -p saddle-character-platformer-controller-lab --features e2e -- platformer_controller_jump_buffer
+cargo run -p saddle-character-platformer-controller-lab --features e2e -- platformer_controller_dash
 cargo run -p saddle-character-platformer-controller-lab --features e2e -- platformer_controller_wall_jump
 cargo run -p saddle-character-platformer-controller-lab --features e2e -- platformer_controller_moving_platform
 cargo run -p saddle-character-platformer-controller-lab --features e2e -- platformer_controller_one_way

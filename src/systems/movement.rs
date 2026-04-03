@@ -1,12 +1,18 @@
-use avian2d::{character_controller::move_and_slide::MoveAndSlideHitResponse, prelude::*};
+use avian2d::{
+    character_controller::move_and_slide::{MoveAndSlideHitResponse, MoveAndSlideOutput},
+    prelude::*,
+};
 use bevy::{ecs::query::Has, prelude::*};
 
 use crate::{
     PlatformVelocityInheritance, PlatformerController, PlatformerControllerConfig,
     PlatformerJumpKind, PlatformerMovementIntent, PlatformerOneWayPlatform, PlatformerWallSide,
-    components::{PendingJumpMessage, PendingWallJumpMessage, PlatformerControllerRuntimeState},
+    components::{
+        PendingDashMessage, PendingJumpMessage, PendingWallJumpMessage,
+        PlatformerControllerRuntimeState,
+    },
     helpers::{
-        approach_scalar, inherited_platform_velocity, move_and_slide_config,
+        approach_scalar, inherited_platform_velocity, move_and_slide_config, sign_or_fallback,
         wall_contact_from_hits, wall_input_matches,
     },
 };
@@ -35,6 +41,10 @@ pub(crate) fn apply_horizontal_movement(
     let delta_secs = time.delta_secs();
 
     for (config, intent, mut velocity, runtime) in &mut controllers {
+        if runtime.dash_time_remaining > 0.0 {
+            continue;
+        }
+
         let grounded = runtime.pre_ground.is_some();
         let inherited_velocity = if grounded {
             inherited_platform_velocity(
@@ -80,6 +90,52 @@ pub(crate) fn apply_horizontal_movement(
     }
 }
 
+pub(crate) fn apply_dash(
+    mut controllers: Query<
+        (
+            &PlatformerControllerConfig,
+            &PlatformerMovementIntent,
+            &mut LinearVelocity,
+            &mut PlatformerControllerRuntimeState,
+        ),
+        With<PlatformerController>,
+    >,
+) {
+    for (config, intent, mut velocity, mut runtime) in &mut controllers {
+        if runtime.dash_time_remaining > 0.0 {
+            velocity.0 = dash_velocity(config, runtime.dash_direction, velocity.0);
+            continue;
+        }
+
+        if !intent.dash_pressed
+            || config.dash.max_charges == 0
+            || runtime.dash_cooldown_remaining > 0.0
+            || runtime.remaining_dashes == 0
+        {
+            continue;
+        }
+
+        let grounded = runtime.pre_ground.is_some();
+        if grounded && !config.dash.allow_ground_dash {
+            continue;
+        }
+
+        let dash_direction = resolve_dash_direction(intent, &runtime, velocity.0, config);
+        velocity.0 = dash_velocity(config, dash_direction, velocity.0);
+        runtime.dash_direction = dash_direction;
+        runtime.dash_time_remaining = config.dash.duration.max(0.0);
+        runtime.dash_cooldown_remaining = config.dash.cooldown.max(0.0);
+        runtime.jump_buffer_remaining = 0.0;
+        runtime.coyote_time_remaining = 0.0;
+        runtime.remaining_dashes = runtime.remaining_dashes.saturating_sub(1);
+        runtime.pending_dash = Some(PendingDashMessage {
+            direction: dash_direction,
+            velocity: velocity.0,
+            remaining_charges: runtime.remaining_dashes,
+        });
+    }
+}
+
 pub(crate) fn apply_jump_logic(
     time: Res<Time>,
     mut controllers: Query<
@@ -95,6 +151,10 @@ pub(crate) fn apply_jump_logic(
     let delta_secs = time.delta_secs();
 
     for (config, intent, mut velocity, mut runtime) in &mut controllers {
+        if runtime.dash_time_remaining > 0.0 {
+            continue;
+        }
+
         let grounded = runtime.pre_ground.is_some();
         let wall_contact = wall_contact_from_hits(
             runtime.pre_left_wall.clone(),
@@ -205,6 +265,10 @@ pub(crate) fn apply_wall_interactions(
     >,
 ) {
     for (config, intent, mut velocity, runtime) in &mut controllers {
+        if runtime.dash_time_remaining > 0.0 {
+            continue;
+        }
+
         if runtime.pre_ground.is_some() {
             continue;
         }
@@ -263,8 +327,10 @@ pub(crate) fn move_controllers(
     for entity in controller_entities {
         let (
             collider,
+            start_position,
             mut next_position,
             rotation,
+            start_velocity,
             mut next_velocity,
             config,
             runtime_snapshot,
@@ -278,7 +344,9 @@ pub(crate) fn move_controllers(
             (
                 collider.clone(),
                 position.0,
+                position.0,
                 *rotation,
+                velocity.0,
                 velocity.0,
                 config.clone(),
                 runtime.clone(),
@@ -294,7 +362,7 @@ pub(crate) fn move_controllers(
 
         let output = {
             let move_and_slide = controller_params.p0();
-            move_and_slide.move_and_slide(
+            let output = move_and_slide.move_and_slide(
                 &collider,
                 next_position,
                 rotation.as_radians(),
@@ -303,7 +371,20 @@ pub(crate) fn move_controllers(
                 &move_and_slide_config(&config.move_and_slide),
                 &filter,
                 |_| MoveAndSlideHitResponse::Accept,
+            );
+            try_corner_correction(
+                &move_and_slide,
+                &collider,
+                start_position,
+                rotation,
+                start_velocity,
+                &config,
+                &filter,
+                delta,
+                &runtime_snapshot,
+                output,
             )
+            .unwrap_or(output)
         };
 
         next_position = output.position;
@@ -382,6 +463,9 @@ pub(crate) fn move_controllers(
         if runtime.ground.is_some() {
             runtime.coyote_time_remaining = config.jump.coyote_time;
             runtime.remaining_air_jumps = config.jump.max_air_jumps;
+            if config.dash.refill_on_ground {
+                runtime.remaining_dashes = config.dash.max_charges;
+            }
             velocity.y = velocity.y.max(
                 inherited_platform_velocity(
                     runtime.support_velocity,
@@ -431,6 +515,94 @@ fn start_ground_or_air_jump(
         velocity: velocity.0,
         used_buffer,
     });
+}
+
+fn resolve_dash_direction(
+    intent: &PlatformerMovementIntent,
+    runtime: &PlatformerControllerRuntimeState,
+    velocity: Vec2,
+    config: &PlatformerControllerConfig,
+) -> Vec2 {
+    if intent.dash_direction.length_squared()
+        >= config.dash.direction_input_threshold * config.dash.direction_input_threshold
+    {
+        return intent.dash_direction.normalize();
+    }
+
+    if intent.move_axis.abs() >= config.dash.direction_input_threshold {
+        return Vec2::new(intent.move_axis.signum(), 0.0);
+    }
+
+    if velocity.x.abs() >= config.dash.direction_input_threshold {
+        return Vec2::new(velocity.x.signum(), 0.0);
+    }
+
+    Vec2::new(sign_or_fallback(runtime.facing_sign, 1.0), 0.0)
+}
+
+fn dash_velocity(
+    config: &PlatformerControllerConfig,
+    dash_direction: Vec2,
+    current_velocity: Vec2,
+) -> Vec2 {
+    let mut velocity = dash_direction.normalize_or_zero() * config.dash.dash_speed();
+    if config.dash.preserve_vertical_velocity && dash_direction.y.abs() <= 0.01 {
+        velocity.y = current_velocity.y;
+    }
+    velocity
+}
+
+fn try_corner_correction(
+    move_and_slide: &MoveAndSlide,
+    collider: &Collider,
+    start_position: Vec2,
+    rotation: Rotation,
+    start_velocity: Vec2,
+    config: &PlatformerControllerConfig,
+    filter: &SpatialQueryFilter,
+    delta: std::time::Duration,
+    runtime: &PlatformerControllerRuntimeState,
+    output: MoveAndSlideOutput,
+) -> Option<MoveAndSlideOutput> {
+    let correction = &config.corner_correction;
+    if correction.max_distance <= 0.0
+        || correction.step_size <= 0.0
+        || start_velocity.y < correction.min_upward_speed
+        || output.projected_velocity.y >= start_velocity.y - 1.0
+    {
+        return None;
+    }
+
+    let preferred_sign = sign_or_fallback(start_velocity.x, runtime.facing_sign);
+    let candidate_signs = [preferred_sign, -preferred_sign];
+    let steps = (correction.max_distance / correction.step_size)
+        .ceil()
+        .max(1.0) as usize;
+
+    for step in 1..=steps {
+        let offset = (step as f32 * correction.step_size).min(correction.max_distance);
+        for sign in candidate_signs {
+            let candidate_position = start_position + Vec2::new(sign * offset, 0.0);
+            let candidate_output = move_and_slide.move_and_slide(
+                collider,
+                candidate_position,
+                rotation.as_radians(),
+                start_velocity,
+                delta,
+                &move_and_slide_config(&config.move_and_slide),
+                filter,
+                |_| MoveAndSlideHitResponse::Accept,
+            );
+
+            if candidate_output.position.y >= output.position.y + correction.min_height_gain
+                && candidate_output.projected_velocity.y > output.projected_velocity.y
+            {
+                return Some(candidate_output);
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

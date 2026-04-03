@@ -96,6 +96,7 @@ pub fn set_scripted_control(
     move_axis: f32,
     jump_held: bool,
     pulse_jump: bool,
+    pulse_dash: bool,
     pulse_drop: bool,
 ) {
     let mut control = world.resource_mut::<ScriptedControl>();
@@ -103,5 +104,6 @@ pub fn set_scripted_control(
     control.move_axis = move_axis;
     control.jump_held = jump_held;
     control.jump_pressed |= pulse_jump;
+    control.dash_pressed |= pulse_dash;
     control.drop_pressed |= pulse_drop;
 }

@@ -27,6 +27,14 @@ pub struct WallJumpStarted {
 }
 
 #[derive(Clone, Debug, Message)]
+pub struct DashStarted {
+    pub entity: Entity,
+    pub direction: Vec2,
+    pub velocity: Vec2,
+    pub remaining_charges: u32,
+}
+
+#[derive(Clone, Debug, Message)]
 pub struct Landed {
     pub entity: Entity,
     pub impact_speed: f32,

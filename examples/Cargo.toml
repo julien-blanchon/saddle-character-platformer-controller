@@ -6,6 +6,7 @@ members = [
     "moving_platforms",
     "one_way_platforms",
     "bevy_enhanced_input",
+    "full_demo",
     "lab",
 ]
 resolver = "3"

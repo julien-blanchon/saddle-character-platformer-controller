@@ -1,9 +1,11 @@
 # Configuration
 
-Every controller entity owns a `PlatformerControllerConfig` component with six authored groups:
+Every controller entity owns a `PlatformerControllerConfig` component with eight authored groups:
 
 - `movement`
 - `jump`
+- `dash`
+- `corner_correction`
 - `walls`
 - `sensing`
 - `platforms`
@@ -43,6 +45,33 @@ Derived values:
 - `jump_speed = base_gravity * time_to_apex`
 
 These formulas intentionally avoid raw “impulse guessing”.
+
+## `dash`
+
+| Field | Type | Default | Recommended Range | Effect | Notable Interactions |
+| --- | --- | --- | --- | --- | --- |
+| `distance` | `f32` | `84.0` | `36.0..160.0` | Authored travel distance for a full dash burst | Combined with `duration` to derive dash speed |
+| `duration` | `f32` | `0.16` | `0.05..0.30` | Time the controller stays in dash phase | Lower values feel snappier; higher values feel floatier |
+| `cooldown` | `f32` | `0.12` | `0.0..0.40` | Delay before another dash can begin | Important when grounded dashes refill immediately |
+| `max_charges` | `u32` | `1` | `0..3` | Maximum dash charges tracked at runtime | `0` disables the mechanic entirely |
+| `refill_on_ground` | `bool` | `true` | `true` or `false` | Refill dash charges whenever grounded contact is restored | Works with `allow_ground_dash` to define air-only vs universal dash kits |
+| `allow_ground_dash` | `bool` | `true` | `true` or `false` | Permit dash activation while grounded | Disable for air-dash-only platformers |
+| `preserve_vertical_velocity` | `bool` | `false` | `true` or `false` | Keep current `y` velocity during horizontal dashes | Helpful for momentum-heavy action games |
+| `direction_input_threshold` | `f32` | `0.2` | `0.05..0.5` | Minimum analog direction magnitude before the dash uses `dash_direction` | Lower values favor sticks; higher values favor intentional cardinal dashes |
+| `exit_speed_scale` | `f32` | `0.35` | `0.0..1.0` | Velocity multiplier applied when a dash expires | Lower values create crisp stops; higher values preserve momentum |
+
+Derived value:
+
+- `dash_speed = distance / duration`
+
+## `corner_correction`
+
+| Field | Type | Default | Recommended Range | Effect | Notable Interactions |
+| --- | --- | --- | --- | --- | --- |
+| `max_distance` | `f32` | `10.0` | `0.0..16.0` | Furthest sideways retry distance when a jump clips a ceiling lip | `0.0` disables explicit corner correction |
+| `step_size` | `f32` | `2.0` | `1.0..4.0` | Horizontal retry increment for each correction candidate | Smaller steps are more precise but cost more retries |
+| `min_upward_speed` | `f32` | `18.0` | `4.0..80.0` | Minimum upward velocity required before the solver attempts correction | Prevents low-energy bumps from jittering sideways |
+| `min_height_gain` | `f32` | `1.0` | `0.25..4.0` | Required vertical improvement before a retry is accepted | Higher values make correction stricter and less forgiving |
 
 ## `walls`
 
@@ -106,6 +135,7 @@ These values tune the Avian2D kinematic solver rather than raw platformer feel.
 - higher `air_acceleration`
 - lower `low_jump_gravity_multiplier`
 - allow at least one `max_air_jumps`
+- raise `dash.duration` if the game uses traversal dashes as air steering tools
 
 ### Sticky wall-jump challenge
 
@@ -115,3 +145,10 @@ These values tune the Avian2D kinematic solver rather than raw platformer feel.
 - slightly longer `wall_jump_steering_lock_time`
 - lower `wall_jump_steering_factor`
 
+### Aggressive action-platformer dash
+
+- increase `dash.distance`
+- lower `dash.duration`
+- keep `dash.cooldown` short
+- enable `dash.allow_ground_dash`
+- reduce `dash.exit_speed_scale` for snappy combo chaining

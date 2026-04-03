@@ -1,0 +1,22 @@
+[package]
+name = "saddle-character-platformer-controller-example-full-demo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bevy = { workspace = true }
+avian2d = { workspace = true }
+bevy_flair = "0.7"
+bevy_input_focus = "0.18"
+bevy_ui_widgets = "0.18"
+saddle-animation-spritesheet = { git = "https://github.com/julien-blanchon/saddle-animation-spritesheet" }
+saddle-camera-pixel-camera = { git = "https://github.com/julien-blanchon/saddle-camera-pixel-camera" }
+saddle-character-platformer-controller = { workspace = true }
+saddle-character-platformer-controller-example-support = { path = "../support" }
+saddle-pane = { git = "https://github.com/julien-blanchon/saddle-pane" }
+saddle-rendering-parallax-scroller = { git = "https://github.com/julien-blanchon/saddle-rendering-parallax-scroller" }
+saddle-rendering-sprite-effects = { git = "https://github.com/julien-blanchon/saddle-rendering-sprite-effects" }
+
+[lints]
+workspace = true

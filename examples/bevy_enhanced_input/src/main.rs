@@ -18,9 +18,14 @@ struct JumpAction;
 #[action_output(bool)]
 struct DropAction;
 
+#[derive(Debug, InputAction)]
+#[action_output(bool)]
+struct DashAction;
+
 fn main() -> AppExit {
     let mut app = App::new();
     support::configure_demo_app(&mut app, DemoScene::Basic, true);
+    support::install_pane(&mut app);
     app.add_plugins(EnhancedInputPlugin);
     app.add_input_context::<DemoPlayer>();
     app.add_observer(cache_move_axis);
@@ -31,6 +36,7 @@ fn main() -> AppExit {
     app.add_observer(clear_jump_hold_on_cancel);
     app.add_observer(clear_jump_hold_on_complete);
     app.add_observer(cache_drop_press);
+    app.add_observer(cache_dash_press);
     app.add_systems(PostStartup, attach_demo_actions);
     app.add_systems(
         FixedUpdate,
@@ -54,6 +60,11 @@ fn attach_demo_actions(mut commands: Commands, player: Single<Entity, With<DemoP
             Action::<DropAction>::new(),
             InputPress::default(),
             bindings![KeyCode::KeyS, KeyCode::ArrowDown, GamepadButton::DPadDown],
+        ),
+        (
+            Action::<DashAction>::new(),
+            InputPress::default(),
+            bindings![KeyCode::ShiftLeft, KeyCode::ShiftRight, GamepadButton::West],
         ),
     ]));
 }
@@ -132,5 +143,15 @@ fn cache_drop_press(
     if let Ok(mut intent) = query.get_mut(trigger.context) {
         let _ = trigger;
         intent.drop_pressed = true;
+    }
+}
+
+fn cache_dash_press(
+    trigger: On<Start<DashAction>>,
+    mut query: Query<&mut PlatformerMovementIntent, With<DemoPlayer>>,
+) {
+    if let Ok(mut intent) = query.get_mut(trigger.context) {
+        let _ = trigger;
+        intent.dash_pressed = true;
     }
 }

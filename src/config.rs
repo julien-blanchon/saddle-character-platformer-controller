@@ -7,6 +7,8 @@ use crate::PlatformVelocityInheritance;
 pub struct PlatformerControllerConfig {
     pub movement: MovementConfig,
     pub jump: PlatformerJumpConfig,
+    pub dash: PlatformerDashConfig,
+    pub corner_correction: PlatformerCornerCorrectionConfig,
     pub walls: PlatformerWallConfig,
     pub sensing: PlatformerSensingConfig,
     pub platforms: PlatformInteractionConfig,
@@ -77,6 +79,62 @@ impl PlatformerJumpConfig {
 
     pub fn jump_speed(&self) -> f32 {
         self.base_gravity() * self.time_to_apex.max(0.001)
+    }
+}
+
+#[derive(Clone, Debug, Reflect)]
+#[reflect(Debug, Default)]
+pub struct PlatformerDashConfig {
+    pub distance: f32,
+    pub duration: f32,
+    pub cooldown: f32,
+    pub max_charges: u32,
+    pub refill_on_ground: bool,
+    pub allow_ground_dash: bool,
+    pub preserve_vertical_velocity: bool,
+    pub direction_input_threshold: f32,
+    pub exit_speed_scale: f32,
+}
+
+impl Default for PlatformerDashConfig {
+    fn default() -> Self {
+        Self {
+            distance: 84.0,
+            duration: 0.16,
+            cooldown: 0.12,
+            max_charges: 1,
+            refill_on_ground: true,
+            allow_ground_dash: true,
+            preserve_vertical_velocity: false,
+            direction_input_threshold: 0.2,
+            exit_speed_scale: 0.35,
+        }
+    }
+}
+
+impl PlatformerDashConfig {
+    pub fn dash_speed(&self) -> f32 {
+        self.distance.max(0.0) / self.duration.max(0.001)
+    }
+}
+
+#[derive(Clone, Debug, Reflect)]
+#[reflect(Debug, Default)]
+pub struct PlatformerCornerCorrectionConfig {
+    pub max_distance: f32,
+    pub step_size: f32,
+    pub min_upward_speed: f32,
+    pub min_height_gain: f32,
+}
+
+impl Default for PlatformerCornerCorrectionConfig {
+    fn default() -> Self {
+        Self {
+            max_distance: 10.0,
+            step_size: 2.0,
+            min_upward_speed: 18.0,
+            min_height_gain: 1.0,
+        }
     }
 }
 

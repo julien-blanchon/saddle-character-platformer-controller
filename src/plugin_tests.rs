@@ -9,10 +9,10 @@ use bevy::{
 };
 
 use crate::{
-    AirJumpConsumed, JumpStarted, Landed, PlatformerControllerBundle, PlatformerControllerPlugin,
-    PlatformerControllerState, PlatformerControllerSystems, PlatformerJumpConfig,
-    PlatformerJumpKind, PlatformerMovementIntent,
-    components::{PendingJumpMessage, PlatformerControllerRuntimeState},
+    AirJumpConsumed, DashStarted, JumpStarted, Landed, PlatformerControllerBundle,
+    PlatformerControllerPlugin, PlatformerControllerState, PlatformerControllerSystems,
+    PlatformerJumpConfig, PlatformerJumpKind, PlatformerMovementIntent,
+    components::{PendingDashMessage, PendingJumpMessage, PlatformerControllerRuntimeState},
     systems::{activation::PlatformerControllerRuntime, state_sync},
 };
 
@@ -124,6 +124,7 @@ fn emit_messages_flushes_pending_runtime_events() {
         .add_message::<JumpStarted>()
         .add_message::<Landed>()
         .add_message::<crate::WallJumpStarted>()
+        .add_message::<DashStarted>()
         .add_message::<AirJumpConsumed>()
         .add_systems(Update, state_sync::emit_messages);
 
@@ -143,6 +144,11 @@ fn emit_messages_flushes_pending_runtime_events() {
             velocity: Vec2::new(12.0, 34.0),
             used_buffer: true,
         });
+        runtime.pending_dash = Some(PendingDashMessage {
+            direction: Vec2::X,
+            velocity: Vec2::new(120.0, 0.0),
+            remaining_charges: 0,
+        });
         runtime.pending_landed_impact_speed = Some(18.0);
         runtime.pending_landed_support = Some(Entity::from_bits(9));
         runtime.pending_air_jump_consumed = Some(0);
@@ -159,6 +165,16 @@ fn emit_messages_flushes_pending_runtime_events() {
     assert_eq!(jumps[0].entity, entity);
     assert_eq!(jumps[0].kind, PlatformerJumpKind::Air);
     assert!(jumps[0].used_buffer);
+
+    let mut dash_cursor = MessageCursor::<DashStarted>::default();
+    let dashes: Vec<_> = dash_cursor
+        .read(app.world().resource::<Messages<DashStarted>>())
+        .cloned()
+        .collect();
+    assert_eq!(dashes.len(), 1);
+    assert_eq!(dashes[0].entity, entity);
+    assert_eq!(dashes[0].direction, Vec2::X);
+    assert_eq!(dashes[0].remaining_charges, 0);
 
     let mut landed_cursor = MessageCursor::<Landed>::default();
     let landings: Vec<_> = landed_cursor
