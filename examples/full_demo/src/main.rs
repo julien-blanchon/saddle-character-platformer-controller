@@ -15,14 +15,15 @@ use saddle_camera_pixel_camera::{
     PixelCamera, PixelCameraInner, PixelCameraPlugin, PixelCameraTransform, PixelSnap,
 };
 use saddle_character_platformer_controller::{
-    DashStarted, PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerPlugin,
-    PlatformerControllerState, PlatformerControllerSystems, PlatformerMotionPhase,
+    DashStarted, PlatformerControllerBundle, PlatformerControllerConfig,
+    PlatformerControllerPlugin, PlatformerControllerState, PlatformerControllerSystems,
+    PlatformerMotionPhase,
 };
 use saddle_character_platformer_controller_example_support as platformer_support;
 use saddle_pane::prelude::*;
 use saddle_rendering_parallax_scroller::{
-    ParallaxAxes, ParallaxCameraTarget, ParallaxLayer, ParallaxLayerBundle,
-    ParallaxLayerStrategy, ParallaxRigBundle, ParallaxScrollerPlugin, ParallaxSegmented,
+    ParallaxAxes, ParallaxCameraTarget, ParallaxLayer, ParallaxLayerBundle, ParallaxLayerStrategy,
+    ParallaxRigBundle, ParallaxScrollerPlugin, ParallaxSegmented,
 };
 use saddle_rendering_sprite_effects::{
     FlashConfig, FlashEffect, OutlineConfig, OutlineEffect, SilhouetteConfig, SilhouetteEffect,
@@ -294,11 +295,7 @@ fn spawn_level(commands: &mut Commands) {
     ));
 }
 
-fn spawn_player(
-    commands: &mut Commands,
-    atlas: DemoAtlas,
-    library: Handle<AnimationLibrary>,
-) {
+fn spawn_player(commands: &mut Commands, atlas: DemoAtlas, library: Handle<AnimationLibrary>) {
     let mut config = platformer_support::DemoScene::Basic.controller_config();
     config.jump.height = 92.0;
     config.jump.time_to_apex = 0.38;
@@ -405,7 +402,10 @@ fn sync_demo_pane(
     mut outlines: Query<&mut OutlineEffect, With<DemoPlayerSprite>>,
     mut silhouettes: Query<&mut SilhouetteEffect, With<DemoPlayerSprite>>,
     mut layers: Query<(&Name, &mut ParallaxLayer)>,
-    player_state: Query<(&PlatformerControllerState, &LinearVelocity, &Transform), With<DemoPlayerSprite>>,
+    player_state: Query<
+        (&PlatformerControllerState, &LinearVelocity, &Transform),
+        With<DemoPlayerSprite>,
+    >,
 ) {
     for mut config in &mut controllers {
         config.jump.height = pane.jump_height.max(0.0);
@@ -459,7 +459,10 @@ fn follow_player_camera(
         return;
     };
 
-    let target = Vec2::new(player.translation.x + 32.0, (player.translation.y + 12.0).max(-30.0));
+    let target = Vec2::new(
+        player.translation.x + 32.0,
+        (player.translation.y + 12.0).max(-30.0),
+    );
     let blend = 1.0 - (-pane.follow_smoothing.max(0.1) * time.delta_secs()).exp();
     camera.logical_position = camera.logical_position.lerp(target, blend);
 }

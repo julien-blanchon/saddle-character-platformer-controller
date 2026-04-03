@@ -144,7 +144,16 @@ fn walking_off_ledge_then_jumping_within_coyote_window_succeeds() {
 
     let mut walked_off = false;
     for _ in 0..90 {
-        set_intent(&mut app, player, 1.0, false, false, false, false, Vec2::ZERO);
+        set_intent(
+            &mut app,
+            player,
+            1.0,
+            false,
+            false,
+            false,
+            false,
+            Vec2::ZERO,
+        );
         app.update();
         let controller = state(&app, player);
         if !controller.is_grounded && controller.can_use_coyote_jump {
@@ -246,7 +255,16 @@ fn wall_slide_requires_valid_wall_contact_and_wall_jump_launches_away() {
 
     let mut wall_sliding = false;
     for _ in 0..90 {
-        set_intent(&mut app, player, -1.0, false, false, false, false, Vec2::ZERO);
+        set_intent(
+            &mut app,
+            player,
+            -1.0,
+            false,
+            false,
+            false,
+            false,
+            Vec2::ZERO,
+        );
         app.update();
         if state(&app, player).phase == crate::PlatformerMotionPhase::WallSliding {
             wall_sliding = true;

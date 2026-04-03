@@ -13,9 +13,9 @@ pub use components::{
     PlatformerOneWayPlatform, PlatformerWallContact, PlatformerWallSide,
 };
 pub use config::{
-    MoveAndSlideTuning, MovementConfig, PlatformInteractionConfig,
-    PlatformerControllerConfig, PlatformerCornerCorrectionConfig, PlatformerDashConfig,
-    PlatformerJumpConfig, PlatformerSensingConfig, PlatformerWallConfig,
+    MoveAndSlideTuning, MovementConfig, PlatformInteractionConfig, PlatformerControllerConfig,
+    PlatformerCornerCorrectionConfig, PlatformerDashConfig, PlatformerJumpConfig,
+    PlatformerSensingConfig, PlatformerWallConfig,
 };
 pub use debug::{PlatformerControllerDebugPlugin, PlatformerControllerDebugSettings};
 pub use messages::{
@@ -135,8 +135,7 @@ impl Plugin for PlatformerControllerPlugin {
                         .in_set(PlatformerControllerSystems::SenseContacts),
                     systems::movement::apply_horizontal_movement
                         .in_set(PlatformerControllerSystems::ApplyMovement),
-                    systems::movement::apply_dash
-                        .in_set(PlatformerControllerSystems::ApplyDash),
+                    systems::movement::apply_dash.in_set(PlatformerControllerSystems::ApplyDash),
                     systems::movement::apply_jump_logic
                         .in_set(PlatformerControllerSystems::ApplyJump),
                     systems::movement::apply_wall_interactions
