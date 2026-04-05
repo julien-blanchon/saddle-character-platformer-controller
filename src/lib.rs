@@ -9,17 +9,20 @@ mod systems;
 pub use bundles::PlatformerControllerBundle;
 pub use components::{
     PlatformVelocityInheritance, PlatformerContact, PlatformerController,
-    PlatformerControllerState, PlatformerMotionPhase, PlatformerMovementIntent,
-    PlatformerOneWayPlatform, PlatformerWallContact, PlatformerWallSide,
+    PlatformerControllerState, PlatformerGrapplePhase, PlatformerGrapplePoint,
+    PlatformerMotionPhase, PlatformerMovementIntent, PlatformerOneWayPlatform,
+    PlatformerSurfaceModifier, PlatformerWallContact, PlatformerWallSide,
 };
 pub use config::{
     MoveAndSlideTuning, MovementConfig, PlatformInteractionConfig, PlatformerControllerConfig,
-    PlatformerCornerCorrectionConfig, PlatformerDashConfig, PlatformerJumpConfig,
-    PlatformerSensingConfig, PlatformerWallConfig,
+    PlatformerCornerCorrectionConfig, PlatformerDashConfig, PlatformerGrappleConfig,
+    PlatformerGroundPoundConfig, PlatformerJumpConfig, PlatformerSensingConfig,
+    PlatformerWallConfig,
 };
 pub use debug::{PlatformerControllerDebugPlugin, PlatformerControllerDebugSettings};
 pub use messages::{
-    AirJumpConsumed, DashStarted, JumpStarted, Landed, PlatformerJumpKind, WallJumpStarted,
+    AirJumpConsumed, DashStarted, GrappleAttached, GrappleDetached, GroundPoundImpact,
+    GroundPoundStarted, JumpStarted, Landed, PlatformerJumpKind, WallClingStarted, WallJumpStarted,
 };
 
 use bevy::{
@@ -34,8 +37,10 @@ pub enum PlatformerControllerSystems {
     SenseContacts,
     ApplyMovement,
     ApplyDash,
+    ApplyGroundPound,
     ApplyJump,
     WallInteractions,
+    ApplyGrapple,
     MoveControllers,
     SyncState,
 }
@@ -85,6 +90,11 @@ impl Plugin for PlatformerControllerPlugin {
             .add_message::<WallJumpStarted>()
             .add_message::<DashStarted>()
             .add_message::<AirJumpConsumed>()
+            .add_message::<GroundPoundStarted>()
+            .add_message::<GroundPoundImpact>()
+            .add_message::<WallClingStarted>()
+            .add_message::<GrappleAttached>()
+            .add_message::<GrappleDetached>()
             .register_type::<MovementConfig>()
             .register_type::<MoveAndSlideTuning>()
             .register_type::<PlatformInteractionConfig>()
@@ -95,12 +105,17 @@ impl Plugin for PlatformerControllerPlugin {
             .register_type::<PlatformerCornerCorrectionConfig>()
             .register_type::<PlatformerControllerState>()
             .register_type::<PlatformerDashConfig>()
+            .register_type::<PlatformerGrappleConfig>()
+            .register_type::<PlatformerGrapplePhase>()
+            .register_type::<PlatformerGrapplePoint>()
+            .register_type::<PlatformerGroundPoundConfig>()
             .register_type::<PlatformerJumpConfig>()
             .register_type::<PlatformerJumpKind>()
             .register_type::<PlatformerMotionPhase>()
             .register_type::<PlatformerMovementIntent>()
             .register_type::<PlatformerOneWayPlatform>()
             .register_type::<PlatformerSensingConfig>()
+            .register_type::<PlatformerSurfaceModifier>()
             .register_type::<PlatformerWallConfig>()
             .register_type::<PlatformerWallContact>()
             .register_type::<PlatformerWallSide>()
@@ -119,8 +134,10 @@ impl Plugin for PlatformerControllerPlugin {
                     PlatformerControllerSystems::SenseContacts,
                     PlatformerControllerSystems::ApplyMovement,
                     PlatformerControllerSystems::ApplyDash,
+                    PlatformerControllerSystems::ApplyGroundPound,
                     PlatformerControllerSystems::ApplyJump,
                     PlatformerControllerSystems::WallInteractions,
+                    PlatformerControllerSystems::ApplyGrapple,
                     PlatformerControllerSystems::MoveControllers,
                     PlatformerControllerSystems::SyncState,
                 )
@@ -136,10 +153,14 @@ impl Plugin for PlatformerControllerPlugin {
                     systems::movement::apply_horizontal_movement
                         .in_set(PlatformerControllerSystems::ApplyMovement),
                     systems::movement::apply_dash.in_set(PlatformerControllerSystems::ApplyDash),
+                    systems::ground_pound::apply_ground_pound
+                        .in_set(PlatformerControllerSystems::ApplyGroundPound),
                     systems::movement::apply_jump_logic
                         .in_set(PlatformerControllerSystems::ApplyJump),
                     systems::movement::apply_wall_interactions
                         .in_set(PlatformerControllerSystems::WallInteractions),
+                    systems::grapple::apply_grapple
+                        .in_set(PlatformerControllerSystems::ApplyGrapple),
                     systems::movement::move_controllers
                         .in_set(PlatformerControllerSystems::MoveControllers),
                     systems::state_sync::sync_controller_state

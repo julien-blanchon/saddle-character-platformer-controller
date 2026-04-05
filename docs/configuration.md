@@ -1,6 +1,6 @@
 # Configuration
 
-Every controller entity owns a `PlatformerControllerConfig` component with eight authored groups:
+Every controller entity owns a `PlatformerControllerConfig` component with ten authored groups:
 
 - `movement`
 - `jump`
@@ -9,6 +9,8 @@ Every controller entity owns a `PlatformerControllerConfig` component with eight
 - `walls`
 - `sensing`
 - `platforms`
+- `ground_pound`
+- `grapple`
 - `move_and_slide`
 
 Ranges below are gameplay-oriented guidance, not hard validation limits.
@@ -38,6 +40,7 @@ Ranges below are gameplay-oriented guidance, not hard validation limits.
 | `coyote_time` | `f32` | `0.1` | `0.03..0.18` | Grace window after losing ground contact | Longer values feel forgiving but less strict |
 | `jump_buffer_time` | `f32` | `0.12` | `0.03..0.20` | Grace window for a jump pressed before landing | Pairs with landing stability and snap distance |
 | `max_air_jumps` | `u32` | `1` | `0..3` | Number of extra jumps after leaving the ground | `0` removes double-jump behavior entirely |
+| `max_fall_speed` | `f32` | `0.0` | `0.0..800.0` | Maximum downward speed (terminal velocity). `0.0` disables the cap | Prevents character from accelerating to extreme speeds in tall shafts |
 
 Derived values:
 
@@ -72,6 +75,7 @@ Derived value:
 | `step_size` | `f32` | `2.0` | `1.0..4.0` | Horizontal retry increment for each correction candidate | Smaller steps are more precise but cost more retries |
 | `min_upward_speed` | `f32` | `18.0` | `4.0..80.0` | Minimum upward velocity required before the solver attempts correction | Prevents low-energy bumps from jittering sideways |
 | `min_height_gain` | `f32` | `1.0` | `0.25..4.0` | Required vertical improvement before a retry is accepted | Higher values make correction stricter and less forgiving |
+| `ledge_assist_distance` | `f32` | `4.0` | `0.0..12.0` | Maximum horizontal nudge to land on ledge edges when falling. `0.0` disables | Helps players barely missing a platform edge; only activates when airborne |
 
 ## `walls`
 
@@ -88,6 +92,8 @@ Derived value:
 | `wall_jump_steering_lock_time` | `f32` | `0.14` | `0.0..0.25` | Duration of reduced steering after a wall jump | `0.0` means immediate full control |
 | `wall_jump_steering_factor` | `f32` | `0.2` | `0.0..1.0` | Input blend during steering lock | `0.0` is a hard lock, `1.0` is no lock at all |
 | `wall_slide_requires_input` | `bool` | `true` | `true` or `false` | Require holding toward the wall to slide | `false` makes accidental slides more common but easier to author |
+| `wall_cling_max_duration` | `f32` | `0.0` | `0.0..2.0` | Maximum time the character clings motionlessly to a wall. `0.0` disables | Fires `WallClingStarted` message on activation |
+| `wall_cling_gravity_multiplier` | `f32` | `0.0` | `0.0..1.0` | Gravity while clinging (`0.0` = full stop) | After cling expires the character resumes wall slide |
 
 ## `sensing`
 
@@ -104,6 +110,29 @@ Derived value:
 | --- | --- | --- | --- | --- | --- |
 | `velocity_inheritance` | `PlatformVelocityInheritance` | `Horizontal` | `Horizontal`, `Full`, `None` | How support motion contributes to controller velocity | `Full` is best for elevators; `Horizontal` often feels best for side-view platformers |
 | `drop_through_duration` | `f32` | `0.18` | `0.08..0.35` | How long one-way platforms ignore the controller after a drop-through press | Longer values reduce accidental re-catch but can overshoot stacked platforms |
+
+## `ground_pound`
+
+| Field | Type | Default | Recommended Range | Effect | Notable Interactions |
+| --- | --- | --- | --- | --- | --- |
+| `hover_duration` | `f32` | `0.08` | `0.0..0.3` | Brief hover before slamming downward | `0.0` skips hover and slams immediately |
+| `fall_speed` | `f32` | `600.0` | `200.0..1200.0` | Downward speed during the slam phase | Higher values create a more dramatic impact |
+| `cancel_horizontal_speed` | `bool` | `true` | `true` or `false` | Zero horizontal velocity on activation | Disable for a directional dive variant |
+| `impact_stun_duration` | `f32` | `0.1` | `0.0..0.4` | Freeze duration on ground impact before movement resumes | Fires `GroundPoundImpact` message with impact speed |
+
+## `grapple`
+
+| Field | Type | Default | Recommended Range | Effect | Notable Interactions |
+| --- | --- | --- | --- | --- | --- |
+| `max_range` | `f32` | `300.0` | `100.0..600.0` | Maximum distance to search for grapple points | Points beyond this range are ignored |
+| `pull_speed` | `f32` | `400.0` | `0.0..800.0` | Speed at which the character is pulled toward the anchor (`0.0` = pure swing) | Combined with swing physics for traversal feel |
+| `detach_speed_boost` | `f32` | `1.3` | `1.0..2.0` | Velocity multiplier applied on detach (momentum boost) | Higher values reward skillful timing |
+| `aim_assist_angle` | `f32` radians | `0.35` | `0.1..0.8` | Angle tolerance for finding grapple points | Wider angles make aiming easier |
+| `min_rope_length` | `f32` | `20.0` | `5.0..50.0` | Minimum rope length (auto-detaches when closer) | Prevents character from clipping through anchor |
+| `retract_speed` | `f32` | `200.0` | `50.0..500.0` | Rope shortening speed per second | Player-controlled via `grapple_retract` intent |
+| `extend_speed` | `f32` | `100.0` | `0.0..300.0` | Rope lengthening speed per second | Player-controlled via `grapple_extend` intent |
+| `swing_gravity_multiplier` | `f32` | `1.0` | `0.5..2.0` | Gravity while swinging (`1.0` = normal) | Lower values create floatier swings |
+| `swing_input_force` | `f32` | `300.0` | `0.0..600.0` | Tangential force from horizontal input while swinging | Higher values give more active swing control |
 
 ## `move_and_slide`
 

@@ -108,7 +108,10 @@ fn main() -> AppExit {
             DemoSystems::DriveIntent.before(PlatformerControllerSystems::ReadIntent),
         )
         .add_systems(Startup, setup_scene)
-        .add_systems(FixedUpdate, drive_keyboard_intent.in_set(DemoSystems::DriveIntent))
+        .add_systems(
+            FixedUpdate,
+            drive_keyboard_intent.in_set(DemoSystems::DriveIntent),
+        )
         .add_systems(Update, (sync_pane_to_config, update_pane_monitors).chain())
         .add_systems(PostUpdate, (follow_camera, tint_player))
         .run()
@@ -172,18 +175,58 @@ fn setup_scene(mut commands: Commands) {
     ));
 
     // --- Shaft geometry ---
-    spawn_block(&mut commands, "Ground",       Vec2::new(0.0, -150.0),  Vec2::new(520.0, 38.0), Color::srgb(0.20, 0.22, 0.26));
-    spawn_block(&mut commands, "Left Wall",    Vec2::new(-120.0, 30.0), Vec2::new(40.0, 360.0), Color::srgb(0.25, 0.30, 0.36));
-    spawn_block(&mut commands, "Right Wall",   Vec2::new(120.0, 30.0),  Vec2::new(40.0, 360.0), Color::srgb(0.25, 0.30, 0.36));
-    spawn_block(&mut commands, "Left Ledge",   Vec2::new(-70.0, -5.0),  Vec2::new(62.0, 18.0),  Color::srgb(0.43, 0.34, 0.30));
-    spawn_block(&mut commands, "Right Ledge",  Vec2::new(70.0, 85.0),   Vec2::new(62.0, 18.0),  Color::srgb(0.43, 0.34, 0.30));
-    spawn_block(&mut commands, "Finish Ledge", Vec2::new(0.0, 170.0),   Vec2::new(150.0, 20.0), Color::srgb(0.38, 0.52, 0.40));
+    spawn_block(
+        &mut commands,
+        "Ground",
+        Vec2::new(0.0, -150.0),
+        Vec2::new(520.0, 38.0),
+        Color::srgb(0.20, 0.22, 0.26),
+    );
+    spawn_block(
+        &mut commands,
+        "Left Wall",
+        Vec2::new(-120.0, 30.0),
+        Vec2::new(40.0, 360.0),
+        Color::srgb(0.25, 0.30, 0.36),
+    );
+    spawn_block(
+        &mut commands,
+        "Right Wall",
+        Vec2::new(120.0, 30.0),
+        Vec2::new(40.0, 360.0),
+        Color::srgb(0.25, 0.30, 0.36),
+    );
+    spawn_block(
+        &mut commands,
+        "Left Ledge",
+        Vec2::new(-70.0, -5.0),
+        Vec2::new(62.0, 18.0),
+        Color::srgb(0.43, 0.34, 0.30),
+    );
+    spawn_block(
+        &mut commands,
+        "Right Ledge",
+        Vec2::new(70.0, 85.0),
+        Vec2::new(62.0, 18.0),
+        Color::srgb(0.43, 0.34, 0.30),
+    );
+    spawn_block(
+        &mut commands,
+        "Finish Ledge",
+        Vec2::new(0.0, 170.0),
+        Vec2::new(150.0, 20.0),
+        Color::srgb(0.38, 0.52, 0.40),
+    );
 }
 
 fn spawn_block(commands: &mut Commands, name: &str, center: Vec2, size: Vec2, color: Color) {
     commands.spawn((
         Name::new(name.to_string()),
-        Sprite { color, custom_size: Some(size), ..default() },
+        Sprite {
+            color,
+            custom_size: Some(size),
+            ..default()
+        },
         Transform::from_xyz(center.x, center.y, 0.0),
         RigidBody::Static,
         Collider::rectangle(size.x, size.y),
@@ -206,6 +249,7 @@ fn drive_keyboard_intent(
     intent.jump_held = keyboard.pressed(KeyCode::Space);
     intent.dash_pressed = keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+    intent.ground_pound_pressed = keyboard.just_pressed(KeyCode::KeyQ);
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +308,9 @@ fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), Wit
         PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
         PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),
         PlatformerMotionPhase::WallSliding => Color::srgb(0.42, 0.76, 0.96),
+        PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
+        PlatformerMotionPhase::GroundPounding => Color::srgb(0.88, 0.18, 0.18),
+        PlatformerMotionPhase::Grappling => Color::srgb(0.60, 0.92, 0.30),
         PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
     };
 }

@@ -23,6 +23,12 @@ pub struct PlatformerControllerBundle {
     custom_position_integration: CustomPositionIntegration,
     locked_axes: LockedAxes,
     collider: Collider,
+    /// Smooth visual interpolation between fixed physics steps.
+    ///
+    /// This eliminates the "ghost rectangle" artifact that appears when the
+    /// sprite renders at the previous-frame `Transform` while `Position` has
+    /// already advanced in the fixed timestep.
+    interpolation: TransformInterpolation,
 }
 
 impl PlatformerControllerBundle {
@@ -47,6 +53,7 @@ impl PlatformerControllerBundle {
             custom_position_integration: CustomPositionIntegration,
             locked_axes: LockedAxes::ROTATION_LOCKED,
             collider,
+            interpolation: TransformInterpolation,
         }
     }
 

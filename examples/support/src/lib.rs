@@ -342,6 +342,7 @@ pub fn drive_keyboard_intent(
     intent.jump_held = keyboard.pressed(KeyCode::Space);
     intent.dash_pressed = keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+    intent.ground_pound_pressed = keyboard.just_pressed(KeyCode::KeyQ);
 }
 
 fn apply_bootstrapped_pane(
@@ -654,6 +655,9 @@ fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), Wit
         PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
         PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),
         PlatformerMotionPhase::WallSliding => Color::srgb(0.42, 0.76, 0.96),
+        PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
+        PlatformerMotionPhase::GroundPounding => Color::srgb(0.88, 0.18, 0.18),
+        PlatformerMotionPhase::Grappling => Color::srgb(0.60, 0.92, 0.30),
         PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
     };
 }

@@ -3,7 +3,7 @@ mod support;
 use bevy::prelude::{Vec2, World};
 use saddle_bevy_e2e::{action::Action, actions::assertions, scenario::Scenario};
 use saddle_character_platformer_controller::{
-    PlatformerJumpKind, PlatformerMotionPhase, PlatformerWallSide,
+    PlatformerGroundPoundConfig, PlatformerJumpKind, PlatformerMotionPhase, PlatformerWallSide,
 };
 
 use crate::LabMessageLog;
@@ -26,6 +26,7 @@ pub fn list_scenarios() -> Vec<&'static str> {
         "platformer_controller_wall_jump",
         "platformer_controller_moving_platform",
         "platformer_controller_one_way",
+        "platformer_controller_ground_pound",
     ]
 }
 
@@ -38,6 +39,7 @@ pub fn scenario_by_name(name: &str) -> Option<Scenario> {
         "platformer_controller_wall_jump" => Some(platformer_controller_wall_jump()),
         "platformer_controller_moving_platform" => Some(platformer_controller_moving_platform()),
         "platformer_controller_one_way" => Some(platformer_controller_one_way()),
+        "platformer_controller_ground_pound" => Some(platformer_controller_ground_pound()),
         _ => None,
     }
 }
@@ -381,5 +383,74 @@ fn platformer_controller_one_way() -> Scenario {
         }))
         .then(assertions::log_summary("platformer_controller_one_way summary"))
         .then(Action::Screenshot("one_way_drop".into()))
+        .build()
+}
+
+fn platformer_controller_ground_pound() -> Scenario {
+    Scenario::builder("platformer_controller_ground_pound")
+        .description("Jump into the air, activate ground pound, and verify the slam reaches the ground with an impact message.")
+        .then(Action::Custom(Box::new(|world| {
+            let mut config = world.resource::<crate::support::DemoState>().scene.controller_config();
+            config.ground_pound = PlatformerGroundPoundConfig {
+                hover_duration: 0.08,
+                fall_speed: 600.0,
+                cancel_horizontal_speed: true,
+                impact_stun_duration: 0.1,
+            };
+            support::teleport_player_with_config(
+                world,
+                Vec2::new(-240.0, -57.0),
+                Vec2::ZERO,
+                config,
+            );
+            // Jump first
+            support::set_scripted_control(world, 0.0, true, true, false, false);
+        })))
+        .then(Action::WaitUntil {
+            label: "player is airborne".into(),
+            condition: Box::new(|world| {
+                let diagnostics = world.resource::<support::DiagnosticsResource>();
+                diagnostics.player_velocity.y > 50.0 && !diagnostics.grounded
+            }),
+            max_frames: 30,
+        })
+        .then(Action::Screenshot("ground_pound_jump".into()))
+        // Now trigger ground pound
+        .then(Action::Custom(Box::new(|world| {
+            support::set_scripted_control_with_ground_pound(world, 0.0, false, false, false, false, true);
+        })))
+        .then(Action::WaitUntil {
+            label: "ground pound active".into(),
+            condition: Box::new(|world| {
+                let diagnostics = world.resource::<support::DiagnosticsResource>();
+                diagnostics.phase == PlatformerMotionPhase::GroundPounding
+            }),
+            max_frames: 30,
+        })
+        .then(hard_assert("ground pound phase entered", |world| {
+            world.resource::<support::DiagnosticsResource>().phase == PlatformerMotionPhase::GroundPounding
+        }))
+        .then(assertions::custom("ground pound started message", |world| {
+            world.resource::<LabMessageLog>().ground_pound_started_count >= 1
+        }))
+        .then(Action::Screenshot("ground_pound_slam".into()))
+        // Wait for impact
+        .then(Action::Custom(Box::new(|world| {
+            support::set_scripted_control(world, 0.0, false, false, false, false);
+        })))
+        .then(Action::WaitUntil {
+            label: "ground pound impact".into(),
+            condition: Box::new(|world| {
+                let log = world.resource::<LabMessageLog>();
+                log.ground_pound_impact_count >= 1
+            }),
+            max_frames: 120,
+        })
+        .then(hard_assert("ground pound impact registered", |world| {
+            let log = world.resource::<LabMessageLog>();
+            log.ground_pound_impact_count >= 1 && log.last_ground_pound_impact_speed > 100.0
+        }))
+        .then(assertions::log_summary("platformer_controller_ground_pound summary"))
+        .then(Action::Screenshot("ground_pound_impact".into()))
         .build()
 }

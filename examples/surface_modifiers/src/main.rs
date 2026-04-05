@@ -1,26 +1,26 @@
-//! Platformer controller — one-way platforms example
+//! Platformer controller — surface modifiers example
 //!
-//! Demonstrates one-way (pass-through) platforms: the player can jump up
-//! through them from below and land on top, then press Down/S to drop through.
+//! Demonstrates per-surface physics: ice (low friction), conveyor belts
+//! (surface velocity), and mud (reduced max speed). Walk across different
+//! surfaces to feel the difference.
+//!
+//! Controls:
+//!   A / D or ←/→  — move
+//!   Space          — jump (hold for higher)
+//!   Shift          — dash
+//!   Q              — ground pound (mid-air)
+//!   S / ↓          — drop through one-way platforms
 
 use avian2d::prelude::*;
 use bevy::{app::AppExit, camera::ScalingMode, prelude::*, window::WindowResolution};
 use saddle_character_platformer_controller::{
     PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerPlugin,
     PlatformerControllerState, PlatformerControllerSystems, PlatformerMotionPhase,
-    PlatformerMovementIntent, PlatformerOneWayPlatform,
+    PlatformerMovementIntent, PlatformerSurfaceModifier,
 };
 use saddle_pane::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const PLAYER_SIZE: Vec2 = Vec2::new(18.0, 30.0);
-
-// ---------------------------------------------------------------------------
-// Components
-// ---------------------------------------------------------------------------
 
 #[derive(Component)]
 struct Player;
@@ -30,53 +30,38 @@ struct FollowCamera {
     smoothing: f32,
 }
 
-// ---------------------------------------------------------------------------
-// Pane
-// ---------------------------------------------------------------------------
-
 #[derive(Resource, Debug, Clone, PartialEq, Pane)]
-#[pane(title = "Platformer — One-Way Platforms", position = "top-right")]
-struct OneWayPane {
-    #[pane(slider, min = 40.0, max = 140.0, step = 1.0)]
-    jump_height: f32,
-    #[pane(slider, min = 0.05, max = 0.5, step = 0.01)]
-    drop_through_duration: f32,
+#[pane(title = "Surface Modifiers", position = "top-right")]
+struct SurfacePane {
     #[pane(monitor)]
     phase: String,
     #[pane(monitor)]
-    grounded: bool,
+    surface: String,
+    #[pane(monitor)]
+    velocity_x: f32,
 }
 
-impl Default for OneWayPane {
+impl Default for SurfacePane {
     fn default() -> Self {
         Self {
-            jump_height: 84.0,
-            drop_through_duration: 0.22,
             phase: "Grounded".into(),
-            grounded: false,
+            surface: "Normal".into(),
+            velocity_x: 0.0,
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// System sets
-// ---------------------------------------------------------------------------
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum DemoSystems {
     DriveIntent,
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
-
 fn main() -> AppExit {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "platformer_controller / one_way_platforms".into(),
+                title: "platformer_controller / surface_modifiers".into(),
                 resolution: WindowResolution::new(1440, 900),
                 ..default()
             }),
@@ -92,7 +77,7 @@ fn main() -> AppExit {
             bevy_input_focus::tab_navigation::TabNavigationPlugin,
             PanePlugin,
         ))
-        .register_pane::<OneWayPane>()
+        .register_pane::<SurfacePane>()
         .configure_sets(
             FixedUpdate,
             DemoSystems::DriveIntent.before(PlatformerControllerSystems::ReadIntent),
@@ -102,14 +87,10 @@ fn main() -> AppExit {
             FixedUpdate,
             drive_keyboard_intent.in_set(DemoSystems::DriveIntent),
         )
-        .add_systems(Update, (sync_pane_to_config, update_pane_monitors).chain())
+        .add_systems(Update, update_pane_monitors)
         .add_systems(PostUpdate, (follow_camera, tint_player))
         .run()
 }
-
-// ---------------------------------------------------------------------------
-// Scene setup
-// ---------------------------------------------------------------------------
 
 fn setup_scene(mut commands: Commands) {
     commands.spawn((
@@ -117,7 +98,7 @@ fn setup_scene(mut commands: Commands) {
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::FixedVertical {
-                viewport_height: 320.0,
+                viewport_height: 360.0,
             },
             ..OrthographicProjection::default_2d()
         }),
@@ -125,20 +106,7 @@ fn setup_scene(mut commands: Commands) {
         FollowCamera { smoothing: 8.0 },
     ));
 
-    // Player — one-way platform config
-    let config = PlatformerControllerConfig {
-        jump: saddle_character_platformer_controller::PlatformerJumpConfig {
-            height: 84.0,
-            time_to_apex: 0.42,
-            ..default()
-        },
-        platforms: saddle_character_platformer_controller::PlatformInteractionConfig {
-            drop_through_duration: 0.22,
-            ..default()
-        },
-        ..default()
-    };
-
+    // Player
     commands.spawn((
         Name::new("Player"),
         Player,
@@ -149,80 +117,115 @@ fn setup_scene(mut commands: Commands) {
         },
         PlatformerControllerBundle::with_config(
             Collider::rectangle(PLAYER_SIZE.x, PLAYER_SIZE.y),
-            config,
+            PlatformerControllerConfig::default(),
         )
-        .with_transform(Transform::from_xyz(-260.0, -20.0, 10.0)),
+        .with_transform(Transform::from_xyz(-380.0, -40.0, 10.0)),
     ));
 
-    // --- Level geometry ---
-    spawn_solid_block(
+    // --- Normal ground ---
+    spawn_block(
         &mut commands,
-        "Ground",
-        Vec2::new(0.0, -150.0),
-        Vec2::new(920.0, 38.0),
-        Color::srgb(0.20, 0.22, 0.26),
+        "Normal Ground",
+        Vec2::new(-340.0, -100.0),
+        Vec2::new(160.0, 30.0),
+        Color::srgb(0.30, 0.30, 0.35),
+        None,
     );
 
-    // One-way platforms — tagged with PlatformerOneWayPlatform so the
-    // controller allows upward passage and enables drop-through.
-    let one_way_color = Color::srgba(0.72, 0.82, 0.95, 0.35);
-    let one_way_size = Vec2::new(170.0, 12.0);
-    spawn_one_way_platform(
+    // --- Ice surface ---
+    spawn_block(
         &mut commands,
-        "One Way A",
-        Vec2::new(-110.0, -60.0),
-        one_way_size,
-        one_way_color,
-    );
-    spawn_one_way_platform(
-        &mut commands,
-        "One Way B",
-        Vec2::new(40.0, 15.0),
-        one_way_size,
-        one_way_color,
-    );
-    spawn_one_way_platform(
-        &mut commands,
-        "One Way C",
-        Vec2::new(200.0, 90.0),
-        one_way_size,
-        one_way_color,
+        "Ice Surface",
+        Vec2::new(-140.0, -100.0),
+        Vec2::new(180.0, 30.0),
+        Color::srgb(0.55, 0.82, 0.96),
+        Some(PlatformerSurfaceModifier {
+            friction_multiplier: 0.12,
+            surface_velocity: Vec2::ZERO,
+            speed_multiplier: 1.2,
+        }),
     );
 
-    // Solid backdrop tower
-    spawn_solid_block(
+    // --- Conveyor belt (right) ---
+    spawn_block(
         &mut commands,
-        "Backdrop Tower",
-        Vec2::new(290.0, -8.0),
-        Vec2::new(90.0, 160.0),
-        Color::srgb(0.26, 0.28, 0.34),
+        "Conveyor Right",
+        Vec2::new(80.0, -100.0),
+        Vec2::new(180.0, 30.0),
+        Color::srgb(0.85, 0.55, 0.20),
+        Some(PlatformerSurfaceModifier {
+            friction_multiplier: 1.0,
+            surface_velocity: Vec2::new(120.0, 0.0),
+            speed_multiplier: 1.0,
+        }),
     );
-}
 
-fn spawn_solid_block(commands: &mut Commands, name: &str, center: Vec2, size: Vec2, color: Color) {
+    // --- Conveyor belt (left) ---
+    spawn_block(
+        &mut commands,
+        "Conveyor Left",
+        Vec2::new(300.0, -100.0),
+        Vec2::new(180.0, 30.0),
+        Color::srgb(0.85, 0.55, 0.20),
+        Some(PlatformerSurfaceModifier {
+            friction_multiplier: 1.0,
+            surface_velocity: Vec2::new(-120.0, 0.0),
+            speed_multiplier: 1.0,
+        }),
+    );
+
+    // --- Mud surface ---
+    spawn_block(
+        &mut commands,
+        "Mud Surface",
+        Vec2::new(520.0, -100.0),
+        Vec2::new(180.0, 30.0),
+        Color::srgb(0.40, 0.28, 0.18),
+        Some(PlatformerSurfaceModifier {
+            friction_multiplier: 2.5,
+            surface_velocity: Vec2::ZERO,
+            speed_multiplier: 0.5,
+        }),
+    );
+
+    // Labels
+    spawn_label(&mut commands, "NORMAL", Vec2::new(-340.0, -70.0));
+    spawn_label(&mut commands, "ICE", Vec2::new(-140.0, -70.0));
+    spawn_label(&mut commands, "CONVEYOR →", Vec2::new(80.0, -70.0));
+    spawn_label(&mut commands, "← CONVEYOR", Vec2::new(300.0, -70.0));
+    spawn_label(&mut commands, "MUD", Vec2::new(520.0, -70.0));
+
+    // On-screen instructions
     commands.spawn((
-        Name::new(name.to_string()),
-        Sprite {
-            color,
-            custom_size: Some(size),
+        Name::new("Instructions"),
+        Text::new(
+            "A/D: Move  |  Space: Jump  |  Shift: Dash  |  Q: Ground Pound\n\
+             Walk across different surfaces to feel the physics differences!",
+        ),
+        TextFont {
+            font_size: 16.0,
             ..default()
         },
-        Transform::from_xyz(center.x, center.y, 0.0),
-        RigidBody::Static,
-        Collider::rectangle(size.x, size.y),
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(16.0),
+            bottom: Val::Px(16.0),
+            ..default()
+        },
     ));
 }
 
-fn spawn_one_way_platform(
+fn spawn_block(
     commands: &mut Commands,
     name: &str,
     center: Vec2,
     size: Vec2,
     color: Color,
+    surface_modifier: Option<PlatformerSurfaceModifier>,
 ) {
-    commands.spawn((
+    let mut entity = commands.spawn((
         Name::new(name.to_string()),
-        PlatformerOneWayPlatform,
         Sprite {
             color,
             custom_size: Some(size),
@@ -232,11 +235,23 @@ fn spawn_one_way_platform(
         RigidBody::Static,
         Collider::rectangle(size.x, size.y),
     ));
+    if let Some(modifier) = surface_modifier {
+        entity.insert(modifier);
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Keyboard → intent
-// ---------------------------------------------------------------------------
+fn spawn_label(commands: &mut Commands, text: &str, position: Vec2) {
+    commands.spawn((
+        Name::new(format!("Label: {}", text)),
+        Text2d::new(text),
+        TextFont {
+            font_size: 14.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
+        Transform::from_xyz(position.x, position.y, 5.0),
+    ));
+}
 
 fn drive_keyboard_intent(
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -253,34 +268,26 @@ fn drive_keyboard_intent(
     intent.ground_pound_pressed = keyboard.just_pressed(KeyCode::KeyQ);
 }
 
-// ---------------------------------------------------------------------------
-// Pane sync
-// ---------------------------------------------------------------------------
-
-fn sync_pane_to_config(
-    pane: Res<OneWayPane>,
-    mut controllers: Query<&mut PlatformerControllerConfig, With<Player>>,
-) {
-    if !pane.is_changed() {
-        return;
-    }
-    for mut config in &mut controllers {
-        config.jump.height = pane.jump_height;
-        config.platforms.drop_through_duration = pane.drop_through_duration;
-    }
-}
-
 fn update_pane_monitors(
     player: Single<&PlatformerControllerState, With<Player>>,
-    mut pane: ResMut<OneWayPane>,
+    mut pane: ResMut<SurfacePane>,
 ) {
-    pane.grounded = player.is_grounded;
     pane.phase = format!("{:?}", player.phase);
+    pane.velocity_x = player.velocity.x;
+    pane.surface = if let Some(modifier) = &player.surface_modifier {
+        if modifier.friction_multiplier < 0.3 {
+            "Ice".into()
+        } else if modifier.surface_velocity.length_squared() > 1.0 {
+            format!("Conveyor ({:.0})", modifier.surface_velocity.x)
+        } else if modifier.speed_multiplier < 0.8 {
+            "Mud".into()
+        } else {
+            "Custom".into()
+        }
+    } else {
+        "Normal".into()
+    };
 }
-
-// ---------------------------------------------------------------------------
-// Camera follow
-// ---------------------------------------------------------------------------
 
 fn follow_camera(
     time: Res<Time>,
@@ -293,10 +300,6 @@ fn follow_camera(
     let blend = 1.0 - (-camera.0.smoothing * time.delta_secs()).exp();
     camera.1.translation = camera.1.translation.lerp(desired, blend);
 }
-
-// ---------------------------------------------------------------------------
-// Tint
-// ---------------------------------------------------------------------------
 
 fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), With<Player>>) {
     player.1.color = match player.0.phase {

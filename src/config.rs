@@ -13,6 +13,8 @@ pub struct PlatformerControllerConfig {
     pub sensing: PlatformerSensingConfig,
     pub platforms: PlatformInteractionConfig,
     pub move_and_slide: MoveAndSlideTuning,
+    pub ground_pound: PlatformerGroundPoundConfig,
+    pub grapple: PlatformerGrappleConfig,
 }
 
 #[derive(Clone, Debug, Reflect)]
@@ -52,6 +54,8 @@ pub struct PlatformerJumpConfig {
     pub coyote_time: f32,
     pub jump_buffer_time: f32,
     pub max_air_jumps: u32,
+    /// Maximum downward speed (terminal velocity). Zero disables the cap.
+    pub max_fall_speed: f32,
 }
 
 impl Default for PlatformerJumpConfig {
@@ -67,6 +71,7 @@ impl Default for PlatformerJumpConfig {
             coyote_time: 0.1,
             jump_buffer_time: 0.12,
             max_air_jumps: 1,
+            max_fall_speed: 0.0,
         }
     }
 }
@@ -125,6 +130,9 @@ pub struct PlatformerCornerCorrectionConfig {
     pub step_size: f32,
     pub min_upward_speed: f32,
     pub min_height_gain: f32,
+    /// Maximum horizontal nudge distance for ledge assist (landing on ledge edges).
+    /// Zero disables ledge assist.
+    pub ledge_assist_distance: f32,
 }
 
 impl Default for PlatformerCornerCorrectionConfig {
@@ -134,6 +142,7 @@ impl Default for PlatformerCornerCorrectionConfig {
             step_size: 2.0,
             min_upward_speed: 18.0,
             min_height_gain: 1.0,
+            ledge_assist_distance: 4.0,
         }
     }
 }
@@ -152,6 +161,10 @@ pub struct PlatformerWallConfig {
     pub wall_jump_steering_lock_time: f32,
     pub wall_jump_steering_factor: f32,
     pub wall_slide_requires_input: bool,
+    /// Maximum time the character can cling to a wall (zero disables cling).
+    pub wall_cling_max_duration: f32,
+    /// Gravity multiplier while clinging (0.0 = full stop).
+    pub wall_cling_gravity_multiplier: f32,
 }
 
 impl Default for PlatformerWallConfig {
@@ -168,6 +181,8 @@ impl Default for PlatformerWallConfig {
             wall_jump_steering_lock_time: 0.14,
             wall_jump_steering_factor: 0.2,
             wall_slide_requires_input: true,
+            wall_cling_max_duration: 0.0,
+            wall_cling_gravity_multiplier: 0.0,
         }
     }
 }
@@ -226,6 +241,69 @@ impl Default for MoveAndSlideTuning {
             depenetration_iterations: 4,
             max_depenetration_error: 0.001,
             max_planes: 16,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Reflect)]
+#[reflect(Debug, Default)]
+pub struct PlatformerGroundPoundConfig {
+    /// Brief hover before slamming (seconds).
+    pub hover_duration: f32,
+    /// Downward speed during the slam.
+    pub fall_speed: f32,
+    /// Whether to cancel horizontal velocity on activation.
+    pub cancel_horizontal_speed: bool,
+    /// Brief freeze on impact before movement resumes.
+    pub impact_stun_duration: f32,
+}
+
+impl Default for PlatformerGroundPoundConfig {
+    fn default() -> Self {
+        Self {
+            hover_duration: 0.08,
+            fall_speed: 600.0,
+            cancel_horizontal_speed: true,
+            impact_stun_duration: 0.1,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Reflect)]
+#[reflect(Debug, Default)]
+pub struct PlatformerGrappleConfig {
+    /// Maximum distance to search for a grapple point.
+    pub max_range: f32,
+    /// Speed at which the character is pulled toward the point (0.0 = pure swing).
+    pub pull_speed: f32,
+    /// Velocity scale applied on detach (momentum boost).
+    pub detach_speed_boost: f32,
+    /// Angle tolerance (radians) for aim-assist when finding grapple points.
+    pub aim_assist_angle: f32,
+    /// Minimum rope length (how close you can reel in).
+    pub min_rope_length: f32,
+    /// Speed at which the rope retracts per second.
+    pub retract_speed: f32,
+    /// Speed at which the rope extends per second.
+    pub extend_speed: f32,
+    /// Gravity multiplier while swinging on the rope (1.0 = normal gravity).
+    pub swing_gravity_multiplier: f32,
+    /// How much horizontal input affects the swing (0.0 = no influence).
+    pub swing_input_force: f32,
+}
+
+impl Default for PlatformerGrappleConfig {
+    fn default() -> Self {
+        Self {
+            max_range: 300.0,
+            pull_speed: 400.0,
+            detach_speed_boost: 1.3,
+            aim_assist_angle: 0.35,
+            min_rope_length: 20.0,
+            retract_speed: 200.0,
+            extend_speed: 100.0,
+            swing_gravity_multiplier: 1.0,
+            swing_input_force: 300.0,
         }
     }
 }

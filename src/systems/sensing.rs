@@ -4,7 +4,7 @@ use bevy::{ecs::query::Has, prelude::*};
 use crate::{
     PlatformerContact, PlatformerController, PlatformerControllerConfig, PlatformerOneWayPlatform,
     PlatformerWallSide,
-    components::PlatformerControllerRuntimeState,
+    components::{PlatformerControllerRuntimeState, PlatformerSurfaceModifier},
     helpers::{collider_half_extents, is_walkable, should_block_one_way},
 };
 
@@ -40,6 +40,7 @@ pub(crate) fn sense_pre_movement_contacts(
         With<PlatformerController>,
     >,
     surfaces: Query<SurfaceQueryFilter, Without<PlatformerController>>,
+    surface_modifiers: Query<&PlatformerSurfaceModifier, Without<PlatformerController>>,
 ) {
     let delta_secs = time.delta_secs().max(f32::EPSILON);
 
@@ -64,6 +65,12 @@ pub(crate) fn sense_pre_movement_contacts(
         runtime.pre_right_wall = contacts.right_wall.clone();
         runtime.support_velocity = contacts.support_velocity;
         runtime.support_position = contacts.support_position;
+
+        // Resolve surface modifier from ground contact entity
+        runtime.surface_modifier = contacts
+            .ground
+            .as_ref()
+            .and_then(|contact| surface_modifiers.get(contact.entity).ok().cloned());
 
         if runtime.pre_ground.is_some() {
             runtime.coyote_time_remaining = config.jump.coyote_time;

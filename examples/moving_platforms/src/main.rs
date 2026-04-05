@@ -178,7 +178,13 @@ fn setup_scene(mut commands: Commands) {
     ));
 
     // --- Level geometry ---
-    spawn_static_block(&mut commands, "Ground", Vec2::new(0.0, -150.0), Vec2::new(920.0, 38.0), Color::srgb(0.20, 0.22, 0.26));
+    spawn_static_block(
+        &mut commands,
+        "Ground",
+        Vec2::new(0.0, -150.0),
+        Vec2::new(920.0, 38.0),
+        Color::srgb(0.20, 0.22, 0.26),
+    );
 
     // Horizontal moving platform
     spawn_moving_platform(
@@ -205,13 +211,23 @@ fn setup_scene(mut commands: Commands) {
     );
 
     // Landing deck (static)
-    spawn_static_block(&mut commands, "Landing Deck", Vec2::new(330.0, 80.0), Vec2::new(180.0, 20.0), Color::srgb(0.28, 0.40, 0.48));
+    spawn_static_block(
+        &mut commands,
+        "Landing Deck",
+        Vec2::new(330.0, 80.0),
+        Vec2::new(180.0, 20.0),
+        Color::srgb(0.28, 0.40, 0.48),
+    );
 }
 
 fn spawn_static_block(commands: &mut Commands, name: &str, center: Vec2, size: Vec2, color: Color) {
     commands.spawn((
         Name::new(name.to_string()),
-        Sprite { color, custom_size: Some(size), ..default() },
+        Sprite {
+            color,
+            custom_size: Some(size),
+            ..default()
+        },
         Transform::from_xyz(center.x, center.y, 0.0),
         RigidBody::Static,
         Collider::rectangle(size.x, size.y),
@@ -236,7 +252,11 @@ fn spawn_moving_platform(
             amplitude,
             speed,
         },
-        Sprite { color, custom_size: Some(size), ..default() },
+        Sprite {
+            color,
+            custom_size: Some(size),
+            ..default()
+        },
         Transform::from_xyz(origin.x, origin.y, 0.0),
         Position(origin),
         Rotation::default(),
@@ -253,7 +273,12 @@ fn spawn_moving_platform(
 
 fn animate_platforms(
     time: Res<Time>,
-    mut platforms: Query<(&MovingPlatform, &mut Position, &mut LinearVelocity, &mut Transform)>,
+    mut platforms: Query<(
+        &MovingPlatform,
+        &mut Position,
+        &mut LinearVelocity,
+        &mut Transform,
+    )>,
 ) {
     let dt = time.delta_secs().max(f32::EPSILON);
 
@@ -284,6 +309,7 @@ fn drive_keyboard_intent(
     intent.jump_held = keyboard.pressed(KeyCode::Space);
     intent.dash_pressed = keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+    intent.ground_pound_pressed = keyboard.just_pressed(KeyCode::KeyQ);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +367,9 @@ fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), Wit
         PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
         PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),
         PlatformerMotionPhase::WallSliding => Color::srgb(0.42, 0.76, 0.96),
+        PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
+        PlatformerMotionPhase::GroundPounding => Color::srgb(0.88, 0.18, 0.18),
+        PlatformerMotionPhase::Grappling => Color::srgb(0.60, 0.92, 0.30),
         PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
     };
 }

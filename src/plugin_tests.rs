@@ -126,6 +126,11 @@ fn emit_messages_flushes_pending_runtime_events() {
         .add_message::<crate::WallJumpStarted>()
         .add_message::<DashStarted>()
         .add_message::<AirJumpConsumed>()
+        .add_message::<crate::GroundPoundStarted>()
+        .add_message::<crate::GroundPoundImpact>()
+        .add_message::<crate::WallClingStarted>()
+        .add_message::<crate::GrappleAttached>()
+        .add_message::<crate::GrappleDetached>()
         .add_systems(Update, state_sync::emit_messages);
 
     let entity = app

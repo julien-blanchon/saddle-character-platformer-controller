@@ -56,6 +56,11 @@ pub(crate) fn prepare_intents(
         runtime.pending_air_jump_consumed = None;
         runtime.pending_landed_impact_speed = None;
         runtime.pending_landed_support = None;
+        runtime.pending_ground_pound_started = false;
+        runtime.pending_ground_pound_impact_speed = None;
+        runtime.pending_grapple_started = None;
+        runtime.pending_grapple_detached = false;
+        runtime.pending_wall_cling_started = None;
 
         runtime.jump_buffer_remaining = (runtime.jump_buffer_remaining - delta_secs).max(0.0);
         runtime.coyote_time_remaining = (runtime.coyote_time_remaining - delta_secs).max(0.0);
@@ -97,5 +102,8 @@ pub(crate) fn clear_transient_intents(
         intent.jump_pressed = false;
         intent.drop_pressed = false;
         intent.dash_pressed = false;
+        intent.ground_pound_pressed = false;
+        intent.grapple_pressed = false;
+        intent.grapple_released = false;
     }
 }

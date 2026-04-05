@@ -46,3 +46,32 @@ pub struct AirJumpConsumed {
     pub entity: Entity,
     pub remaining_air_jumps: u32,
 }
+
+#[derive(Clone, Debug, Message)]
+pub struct GroundPoundStarted {
+    pub entity: Entity,
+}
+
+#[derive(Clone, Debug, Message)]
+pub struct GroundPoundImpact {
+    pub entity: Entity,
+    pub impact_speed: f32,
+}
+
+#[derive(Clone, Debug, Message)]
+pub struct WallClingStarted {
+    pub entity: Entity,
+    pub side: PlatformerWallSide,
+}
+
+#[derive(Clone, Debug, Message)]
+pub struct GrappleAttached {
+    pub entity: Entity,
+    pub target: Vec2,
+}
+
+#[derive(Clone, Debug, Message)]
+pub struct GrappleDetached {
+    pub entity: Entity,
+    pub velocity: Vec2,
+}

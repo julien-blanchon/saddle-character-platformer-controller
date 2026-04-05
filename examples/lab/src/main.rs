@@ -6,9 +6,10 @@ use saddle_character_platformer_controller_example_support as support;
 
 use bevy::prelude::*;
 use saddle_character_platformer_controller::{
-    AirJumpConsumed, DashStarted, JumpStarted, Landed, PlatformerControllerDebugPlugin,
-    PlatformerControllerDebugSettings, PlatformerControllerSystems, PlatformerJumpKind,
-    PlatformerMovementIntent, PlatformerWallSide, WallJumpStarted,
+    AirJumpConsumed, DashStarted, GroundPoundImpact, GroundPoundStarted, JumpStarted, Landed,
+    PlatformerControllerDebugPlugin, PlatformerControllerDebugSettings,
+    PlatformerControllerSystems, PlatformerJumpKind, PlatformerMovementIntent, PlatformerWallSide,
+    WallJumpStarted,
 };
 use support::{DemoFixedSystems, DemoPlayer, DemoScene};
 
@@ -23,6 +24,7 @@ pub struct ScriptedControl {
     pub jump_pressed: bool,
     pub dash_pressed: bool,
     pub drop_pressed: bool,
+    pub ground_pound_pressed: bool,
 }
 
 #[derive(Resource, Reflect, Default, Debug, Clone)]
@@ -44,6 +46,9 @@ pub struct LabMessageLog {
     pub last_impact_speed: f32,
     pub air_jump_consumed_count: u32,
     pub last_remaining_air_jumps: Option<u32>,
+    pub ground_pound_started_count: u32,
+    pub ground_pound_impact_count: u32,
+    pub last_ground_pound_impact_speed: f32,
 }
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -93,6 +98,8 @@ fn main() {
             record_wall_jump_messages.in_set(LabFixedSystems::ObserveMessages),
             record_landed_messages.in_set(LabFixedSystems::ObserveMessages),
             record_air_jump_messages.in_set(LabFixedSystems::ObserveMessages),
+            record_ground_pound_started_messages.in_set(LabFixedSystems::ObserveMessages),
+            record_ground_pound_impact_messages.in_set(LabFixedSystems::ObserveMessages),
         ),
     );
 
@@ -160,6 +167,11 @@ fn apply_scripted_control(
         intent.drop_pressed = true;
         scripted.drop_pressed = false;
     }
+
+    if scripted.ground_pound_pressed {
+        intent.ground_pound_pressed = true;
+        scripted.ground_pound_pressed = false;
+    }
 }
 
 fn record_jump_messages(mut log: ResMut<LabMessageLog>, mut messages: MessageReader<JumpStarted>) {
@@ -206,5 +218,24 @@ fn record_air_jump_messages(
     for message in messages.read() {
         log.air_jump_consumed_count += 1;
         log.last_remaining_air_jumps = Some(message.remaining_air_jumps);
+    }
+}
+
+fn record_ground_pound_started_messages(
+    mut log: ResMut<LabMessageLog>,
+    mut messages: MessageReader<GroundPoundStarted>,
+) {
+    for _message in messages.read() {
+        log.ground_pound_started_count += 1;
+    }
+}
+
+fn record_ground_pound_impact_messages(
+    mut log: ResMut<LabMessageLog>,
+    mut messages: MessageReader<GroundPoundImpact>,
+) {
+    for message in messages.read() {
+        log.ground_pound_impact_count += 1;
+        log.last_ground_pound_impact_speed = message.impact_speed;
     }
 }

@@ -107,3 +107,22 @@ pub fn set_scripted_control(
     control.dash_pressed |= pulse_dash;
     control.drop_pressed |= pulse_drop;
 }
+
+pub fn set_scripted_control_with_ground_pound(
+    world: &mut World,
+    move_axis: f32,
+    jump_held: bool,
+    pulse_jump: bool,
+    pulse_dash: bool,
+    pulse_drop: bool,
+    pulse_ground_pound: bool,
+) {
+    let mut control = world.resource_mut::<ScriptedControl>();
+    control.active = true;
+    control.move_axis = move_axis;
+    control.jump_held = jump_held;
+    control.jump_pressed |= pulse_jump;
+    control.dash_pressed |= pulse_dash;
+    control.drop_pressed |= pulse_drop;
+    control.ground_pound_pressed |= pulse_ground_pound;
+}

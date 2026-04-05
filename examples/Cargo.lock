@@ -5496,6 +5496,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "saddle-character-platformer-controller-example-grapple"
+version = "0.1.0"
+dependencies = [
+ "avian2d",
+ "bevy",
+ "bevy_flair",
+ "bevy_input_focus",
+ "bevy_ui_widgets",
+ "saddle-character-platformer-controller",
+ "saddle-pane",
+]
+
+[[package]]
+name = "saddle-character-platformer-controller-example-ground-pound"
+version = "0.1.0"
+dependencies = [
+ "avian2d",
+ "bevy",
+ "bevy_flair",
+ "bevy_input_focus",
+ "bevy_ui_widgets",
+ "saddle-character-platformer-controller",
+ "saddle-pane",
+]
+
+[[package]]
 name = "saddle-character-platformer-controller-example-moving-platforms"
 version = "0.1.0"
 dependencies = [
@@ -5523,6 +5549,19 @@ dependencies = [
 
 [[package]]
 name = "saddle-character-platformer-controller-example-support"
+version = "0.1.0"
+dependencies = [
+ "avian2d",
+ "bevy",
+ "bevy_flair",
+ "bevy_input_focus",
+ "bevy_ui_widgets",
+ "saddle-character-platformer-controller",
+ "saddle-pane",
+]
+
+[[package]]
+name = "saddle-character-platformer-controller-example-surface-modifiers"
 version = "0.1.0"
 dependencies = [
  "avian2d",

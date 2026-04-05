@@ -20,10 +20,12 @@ The runtime exposes explicit phases through `PlatformerControllerSystems`:
 2. `SenseContacts`
 3. `ApplyMovement`
 4. `ApplyDash`
-5. `ApplyJump`
-6. `WallInteractions`
-7. `MoveControllers`
-8. `SyncState`
+5. `ApplyGroundPound`
+6. `ApplyJump`
+7. `WallInteractions`
+8. `ApplyGrapple`
+9. `MoveControllers`
+10. `SyncState`
 
 The order is intentional:
 
@@ -31,9 +33,11 @@ The order is intentional:
 - `SenseContacts` samples the pre-move world state for coyote time, wall validity, and support motion
 - `ApplyMovement` resolves horizontal acceleration against the current support policy
 - `ApplyDash` converts dash intent into a temporary authored movement phase before jump/gravity logic runs
-- `ApplyJump` resolves jump buffering, coyote jumps, air jumps, gravity shaping, and wall-jump launch
-- `WallInteractions` applies slide-specific downward clamping after the jump logic has finalized vertical intent
-- `MoveControllers` performs the actual `MoveAndSlide` step and re-probes the world after movement
+- `ApplyGroundPound` handles hover → slam → impact stun phases, overriding velocity during each
+- `ApplyJump` resolves jump buffering, coyote jumps, air jumps, gravity shaping, terminal velocity clamping, and wall-jump launch
+- `WallInteractions` applies slide-specific downward clamping and wall-cling tracking after jump logic
+- `ApplyGrapple` handles grapple firing, pendulum swing physics, rope constraint, and detachment
+- `MoveControllers` performs the actual `MoveAndSlide` step, corner correction, ledge assist, ground snapping, and landing detection
 - `SyncState` publishes the readable state component and emits messages
 
 ## Contact Sensing
@@ -146,7 +150,7 @@ Wall jumping:
 
 During the steering lock window, horizontal input is blended by `wall_jump_steering_factor` instead of being ignored entirely. This keeps the behavior tunable between “hard lock” and “immediate air steer”.
 
-## Corner Correction
+## Corner Correction and Ledge Assist
 
 Corner correction is applied inside the movement step rather than as a separate teleporting hack.
 
@@ -154,7 +158,53 @@ Corner correction is applied inside the movement step rather than as a separate 
 - it then retries the same move from small sideways offsets, using `corner_correction.step_size` up to `corner_correction.max_distance`
 - a retry is accepted only if it produces a meaningful height gain (`min_height_gain`)
 
-This approach keeps the crate grounded in Avian's solver while still giving platformer-style “ceiling lip forgiveness” when a jump barely clips an edge.
+Ledge assist is the horizontal equivalent for landing:
+
+- when the character was airborne and barely misses a ledge edge while falling, the runtime tries small horizontal nudges
+- uses the same `step_size` increment up to `ledge_assist_distance`
+- only activates when the character was previously airborne (not when walking off a ledge, which should trigger coyote time instead)
+
+## Ground Pound
+
+Ground pound is a three-phase downward action:
+
+1. **Hover**: velocity is zeroed for `hover_duration` seconds (can be skipped with `0.0`)
+2. **Slam**: velocity is set to `(0, -fall_speed)` with optional horizontal cancellation
+3. **Impact stun**: on ground contact, movement freezes for `impact_stun_duration`
+
+The ground pound overrides all other movement and gravity logic during its active phases. It can be cancelled by dash activation. Fires `GroundPoundStarted` on activation and `GroundPoundImpact` on landing.
+
+## Grapple Hook
+
+The grapple implements pendulum swing physics:
+
+- **Firing**: aim-assisted search for the nearest `PlatformerGrapplePoint` within `max_range` and `aim_assist_angle`
+- **Swing**: gravity applies normally (scaled by `swing_gravity_multiplier`), horizontal input adds tangential force
+- **Rope constraint**: when the character reaches rope length, velocity is projected tangentially (radial-outward component removed)
+- **Pull**: optional `pull_speed` pulls the character toward the anchor
+- **Retract/extend**: player can shorten/lengthen the rope via intent
+
+Detaching (jump or explicit release) applies `detach_speed_boost` to current velocity for momentum carry.
+
+## Surface Modifiers
+
+`PlatformerSurfaceModifier` is a component attached to ground entities that modifies movement physics on contact:
+
+- `friction_multiplier`: scales acceleration/deceleration (0.0 = ice, 1.0 = normal, >1.0 = sticky)
+- `surface_velocity`: constant velocity added while on the surface (conveyor belts)
+- `speed_multiplier`: scales maximum speed on the surface
+
+The modifier is resolved each frame from the current ground contact entity.
+
+## Wall Cling
+
+Wall cling is a timed mechanic that temporarily arrests downward motion on a wall:
+
+- activates when the character touches a valid wall while falling and `wall_cling_max_duration > 0`
+- during cling, gravity is scaled by `wall_cling_gravity_multiplier` (0.0 = full stop)
+- after the cling timer expires, normal wall slide resumes
+- wall jump during cling launches away from the wall as normal
+- fires `WallClingStarted` message once on transition (not every frame)
 
 ## Debug Strategy
 
@@ -173,6 +223,9 @@ The public `PlatformerControllerState` also mirrors the important derived facts 
 - remaining air jumps
 - remaining dash charges and dash timers
 - current wall contact
+- ground pound status
+- grapple phase and rope length
+- active surface modifier
 
 ## Determinism Notes
 

@@ -15,6 +15,18 @@ pub struct PlatformerMovementIntent {
     pub drop_pressed: bool,
     pub dash_pressed: bool,
     pub dash_direction: Vec2,
+    /// Trigger a ground pound (mid-air downward slam).
+    pub ground_pound_pressed: bool,
+    /// Fire the grapple hook toward `grapple_direction`.
+    pub grapple_pressed: bool,
+    /// Release / detach the grapple hook.
+    pub grapple_released: bool,
+    /// Aim direction for the grapple (normalized; ZERO = auto-aim).
+    pub grapple_direction: Vec2,
+    /// Retract the grapple rope (shorten).
+    pub grapple_retract: bool,
+    /// Extend the grapple rope (lengthen).
+    pub grapple_extend: bool,
 }
 
 impl Default for PlatformerMovementIntent {
@@ -26,6 +38,12 @@ impl Default for PlatformerMovementIntent {
             drop_pressed: false,
             dash_pressed: false,
             dash_direction: Vec2::ZERO,
+            ground_pound_pressed: false,
+            grapple_pressed: false,
+            grapple_released: false,
+            grapple_direction: Vec2::ZERO,
+            grapple_retract: false,
+            grapple_extend: false,
         }
     }
 }
@@ -33,6 +51,36 @@ impl Default for PlatformerMovementIntent {
 #[derive(Component, Reflect, Clone, Debug, Default)]
 #[reflect(Component, Default, Debug)]
 pub struct PlatformerOneWayPlatform;
+
+/// Attach to a ground/platform entity to modify movement physics on contact.
+///
+/// Example: ice surface (`friction_multiplier: 0.15`), conveyor belt
+/// (`surface_velocity: Vec2::new(120.0, 0.0)`), mud (`speed_multiplier: 0.5`).
+#[derive(Component, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Component, Default, Debug)]
+pub struct PlatformerSurfaceModifier {
+    /// Multiplier on acceleration and deceleration (0.0 = no friction / ice, 1.0 = normal).
+    pub friction_multiplier: f32,
+    /// Constant velocity added to the character while on this surface (conveyor belt).
+    pub surface_velocity: Vec2,
+    /// Multiplier on maximum speed while on this surface.
+    pub speed_multiplier: f32,
+}
+
+impl Default for PlatformerSurfaceModifier {
+    fn default() -> Self {
+        Self {
+            friction_multiplier: 1.0,
+            surface_velocity: Vec2::ZERO,
+            speed_multiplier: 1.0,
+        }
+    }
+}
+
+/// Marker for entities that can be targeted by the grapple hook.
+#[derive(Component, Reflect, Clone, Debug, Default)]
+#[reflect(Component, Default, Debug)]
+pub struct PlatformerGrapplePoint;
 
 #[derive(Clone, Copy, Debug, Reflect, PartialEq, Eq, Default)]
 #[reflect(Debug, PartialEq, Default)]
@@ -60,8 +108,21 @@ pub enum PlatformerMotionPhase {
     Apex,
     Falling,
     WallSliding,
+    WallClinging,
+    GroundPounding,
+    Grappling,
     #[default]
     Airborne,
+}
+
+/// Current grapple hook state.
+#[derive(Clone, Copy, Debug, Reflect, PartialEq, Default)]
+#[reflect(Debug, PartialEq, Default)]
+pub enum PlatformerGrapplePhase {
+    #[default]
+    Idle,
+    /// Pulling toward the attached point.
+    Pulling { target: Vec2, rope_length: f32 },
 }
 
 #[derive(Clone, Debug, Reflect, PartialEq)]
@@ -110,6 +171,11 @@ pub struct PlatformerControllerState {
     pub wall_jump_lock_remaining: f32,
     pub dash_time_remaining: f32,
     pub dash_cooldown_remaining: f32,
+    pub ground_pound_active: bool,
+    pub wall_cling_remaining: f32,
+    pub grapple_phase: PlatformerGrapplePhase,
+    /// The active surface modifier from the ground entity (if any).
+    pub surface_modifier: Option<PlatformerSurfaceModifier>,
 }
 
 impl Default for PlatformerControllerState {
@@ -131,6 +197,10 @@ impl Default for PlatformerControllerState {
             wall_jump_lock_remaining: 0.0,
             dash_time_remaining: 0.0,
             dash_cooldown_remaining: 0.0,
+            ground_pound_active: false,
+            wall_cling_remaining: 0.0,
+            grapple_phase: PlatformerGrapplePhase::Idle,
+            surface_modifier: None,
         }
     }
 }
@@ -185,6 +255,23 @@ pub(crate) struct PlatformerControllerRuntimeState {
     pub pending_landed_impact_speed: Option<f32>,
     pub pending_landed_support: Option<Entity>,
     pub pending_air_jump_consumed: Option<u32>,
+    // --- Ground pound ---
+    pub ground_pound_active: bool,
+    pub ground_pound_hover_remaining: f32,
+    pub ground_pound_impact_stun: f32,
+    pub pending_ground_pound_started: bool,
+    pub pending_ground_pound_impact_speed: Option<f32>,
+    // --- Wall cling ---
+    pub wall_cling_remaining: f32,
+    pub was_wall_clinging: bool,
+    pub pending_wall_cling_started: Option<PlatformerWallSide>,
+    // --- Grapple ---
+    pub grapple_phase: PlatformerGrapplePhase,
+    pub grapple_target_entity: Option<Entity>,
+    pub pending_grapple_started: Option<Vec2>,
+    pub pending_grapple_detached: bool,
+    // --- Surface modifier (cached from ground contact) ---
+    pub surface_modifier: Option<PlatformerSurfaceModifier>,
 }
 
 impl Default for PlatformerControllerRuntimeState {
@@ -218,6 +305,19 @@ impl Default for PlatformerControllerRuntimeState {
             pending_landed_impact_speed: None,
             pending_landed_support: None,
             pending_air_jump_consumed: None,
+            ground_pound_active: false,
+            ground_pound_hover_remaining: 0.0,
+            ground_pound_impact_stun: 0.0,
+            pending_ground_pound_started: false,
+            pending_ground_pound_impact_speed: None,
+            wall_cling_remaining: 0.0,
+            was_wall_clinging: false,
+            pending_wall_cling_started: None,
+            grapple_phase: PlatformerGrapplePhase::Idle,
+            grapple_target_entity: None,
+            pending_grapple_started: None,
+            pending_grapple_detached: false,
+            surface_modifier: None,
         }
     }
 }

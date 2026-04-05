@@ -9,7 +9,7 @@ use crate::{
     PlatformerJumpKind, PlatformerMovementIntent, PlatformerOneWayPlatform, PlatformerWallSide,
     components::{
         PendingDashMessage, PendingJumpMessage, PendingWallJumpMessage,
-        PlatformerControllerRuntimeState,
+        PlatformerControllerRuntimeState, PlatformerGrapplePhase,
     },
     helpers::{
         approach_scalar, inherited_platform_velocity, move_and_slide_config, sign_or_fallback,
@@ -41,7 +41,13 @@ pub(crate) fn apply_horizontal_movement(
     let delta_secs = time.delta_secs();
 
     for (config, intent, mut velocity, runtime) in &mut controllers {
-        if runtime.dash_time_remaining > 0.0 {
+        // Skip during dash, ground pound, impact stun, or grapple
+        if runtime.dash_time_remaining > 0.0
+            || runtime.ground_pound_active
+            || runtime.ground_pound_hover_remaining > 0.0
+            || runtime.ground_pound_impact_stun > 0.0
+            || !matches!(runtime.grapple_phase, PlatformerGrapplePhase::Idle)
+        {
             continue;
         }
 
@@ -63,29 +69,46 @@ pub(crate) fn apply_horizontal_movement(
         }
 
         let accelerating = move_axis.abs() > 0.01;
+
+        // Surface modifier: friction and speed multipliers
+        let (friction_mult, speed_mult, surface_vel) =
+            if let Some(modifier) = runtime.surface_modifier.as_ref() {
+                (
+                    modifier.friction_multiplier,
+                    modifier.speed_multiplier,
+                    modifier.surface_velocity,
+                )
+            } else {
+                (1.0, 1.0, Vec2::ZERO)
+            };
+
         let acceleration = if grounded {
-            if accelerating {
+            let base = if accelerating {
                 config.movement.ground_acceleration
             } else {
                 config.movement.ground_deceleration
-            }
+            };
+            base * friction_mult
         } else if accelerating {
             config.movement.air_acceleration
         } else {
             config.movement.air_deceleration
         };
 
-        let mut target_speed = move_axis * config.movement.max_speed;
+        let effective_max_speed = config.movement.max_speed * speed_mult;
+        let mut target_speed = move_axis * effective_max_speed;
         if !grounded && local_velocity.y.abs() <= config.jump.apex_velocity_threshold {
             target_speed *= config.movement.apex_air_control_multiplier;
         }
 
         local_velocity.x =
             approach_scalar(local_velocity.x, target_speed, acceleration * delta_secs);
-        velocity.x = local_velocity.x + inherited_velocity.x;
+
+        // Apply surface velocity (conveyor belt)
+        velocity.x = local_velocity.x + inherited_velocity.x + surface_vel.x;
 
         if grounded && velocity.y <= inherited_velocity.y {
-            velocity.y = inherited_velocity.y;
+            velocity.y = inherited_velocity.y + surface_vel.y;
         }
     }
 }
@@ -111,6 +134,9 @@ pub(crate) fn apply_dash(
             || config.dash.max_charges == 0
             || runtime.dash_cooldown_remaining > 0.0
             || runtime.remaining_dashes == 0
+            || runtime.ground_pound_active
+            || runtime.ground_pound_hover_remaining > 0.0
+            || runtime.ground_pound_impact_stun > 0.0
         {
             continue;
         }
@@ -128,6 +154,9 @@ pub(crate) fn apply_dash(
         runtime.jump_buffer_remaining = 0.0;
         runtime.coyote_time_remaining = 0.0;
         runtime.remaining_dashes = runtime.remaining_dashes.saturating_sub(1);
+        // Cancel ground pound on dash
+        runtime.ground_pound_active = false;
+        runtime.ground_pound_hover_remaining = 0.0;
         runtime.pending_dash = Some(PendingDashMessage {
             direction: dash_direction,
             velocity: velocity.0,
@@ -151,7 +180,13 @@ pub(crate) fn apply_jump_logic(
     let delta_secs = time.delta_secs();
 
     for (config, intent, mut velocity, mut runtime) in &mut controllers {
-        if runtime.dash_time_remaining > 0.0 {
+        // Skip during dash, ground pound, impact stun, or grapple
+        if runtime.dash_time_remaining > 0.0
+            || runtime.ground_pound_active
+            || runtime.ground_pound_hover_remaining > 0.0
+            || runtime.ground_pound_impact_stun > 0.0
+            || !matches!(runtime.grapple_phase, PlatformerGrapplePhase::Idle)
+        {
             continue;
         }
 
@@ -160,6 +195,9 @@ pub(crate) fn apply_jump_logic(
             runtime.pre_left_wall.clone(),
             runtime.pre_right_wall.clone(),
         );
+
+        let is_wall_clinging = runtime.wall_cling_remaining > 0.0;
+
         let wall_slide_active = wall_contact.as_ref().is_some_and(|wall| {
             velocity.y < 0.0
                 && (!config.walls.wall_slide_requires_input
@@ -179,8 +217,9 @@ pub(crate) fn apply_jump_logic(
                     used_buffer,
                 );
             } else if let Some(wall) = wall_contact.as_ref().filter(|wall| {
-                !config.walls.wall_slide_requires_input
-                    || wall_input_matches(wall.side, intent.move_axis)
+                (wall_slide_active || is_wall_clinging)
+                    && (!config.walls.wall_slide_requires_input
+                        || wall_input_matches(wall.side, intent.move_axis))
             }) {
                 let horizontal_speed = match wall.side {
                     PlatformerWallSide::Left => config.walls.wall_jump_horizontal_speed,
@@ -191,6 +230,7 @@ pub(crate) fn apply_jump_logic(
                 runtime.jump_buffer_remaining = 0.0;
                 runtime.coyote_time_remaining = 0.0;
                 runtime.wall_jump_lock_remaining = config.walls.wall_jump_steering_lock_time;
+                runtime.wall_cling_remaining = 0.0;
                 runtime.pending_jump = Some(PendingJumpMessage {
                     kind: PlatformerJumpKind::Wall,
                     velocity: velocity.0,
@@ -233,6 +273,14 @@ pub(crate) fn apply_jump_logic(
             continue;
         }
 
+        // Wall cling: if wall contact and cling duration > 0, apply cling gravity
+        if is_wall_clinging {
+            let cling_gravity =
+                config.jump.base_gravity() * config.walls.wall_cling_gravity_multiplier;
+            velocity.y -= cling_gravity * delta_secs;
+            continue;
+        }
+
         let mut gravity_multiplier = if velocity.y > config.jump.apex_velocity_threshold {
             if intent.jump_held {
                 config.jump.rise_gravity_multiplier
@@ -250,26 +298,38 @@ pub(crate) fn apply_jump_logic(
         }
 
         velocity.y -= config.jump.base_gravity() * gravity_multiplier * delta_secs;
+
+        // Enforce terminal velocity
+        if config.jump.max_fall_speed > 0.0 {
+            velocity.y = velocity.y.max(-config.jump.max_fall_speed);
+        }
     }
 }
 
 pub(crate) fn apply_wall_interactions(
+    time: Res<Time>,
     mut controllers: Query<
         (
             &PlatformerControllerConfig,
             &PlatformerMovementIntent,
             &mut LinearVelocity,
-            &PlatformerControllerRuntimeState,
+            &mut PlatformerControllerRuntimeState,
         ),
         With<PlatformerController>,
     >,
 ) {
-    for (config, intent, mut velocity, runtime) in &mut controllers {
-        if runtime.dash_time_remaining > 0.0 {
+    let delta_secs = time.delta_secs();
+
+    for (config, intent, mut velocity, mut runtime) in &mut controllers {
+        if runtime.dash_time_remaining > 0.0
+            || runtime.ground_pound_active
+            || runtime.ground_pound_hover_remaining > 0.0
+        {
             continue;
         }
 
         if runtime.pre_ground.is_some() {
+            runtime.wall_cling_remaining = 0.0;
             continue;
         }
 
@@ -283,12 +343,42 @@ pub(crate) fn apply_wall_interactions(
                     || wall_input_matches(wall.side, intent.move_axis))
         });
 
+        // Wall cling logic
+        if config.walls.wall_cling_max_duration > 0.0
+            && wall_contact.as_ref().is_some_and(|wall| {
+                !config.walls.wall_slide_requires_input
+                    || wall_input_matches(wall.side, intent.move_axis)
+            })
+        {
+            if runtime.wall_cling_remaining <= 0.0 && velocity.y <= 0.0 {
+                // Start a new cling
+                runtime.wall_cling_remaining = config.walls.wall_cling_max_duration;
+                if !runtime.was_wall_clinging {
+                    runtime.pending_wall_cling_started =
+                        wall_contact.as_ref().map(|wall| wall.side);
+                }
+            }
+            if runtime.wall_cling_remaining > 0.0 {
+                runtime.wall_cling_remaining = (runtime.wall_cling_remaining - delta_secs).max(0.0);
+            }
+            runtime.was_wall_clinging = true;
+        } else {
+            runtime.wall_cling_remaining = 0.0;
+            runtime.was_wall_clinging = false;
+        }
+
         if wall_slide_active {
             velocity.y = velocity.y.max(-config.walls.wall_slide_terminal_speed);
         }
     }
 }
 
+/// Moves controllers using Avian's MoveAndSlide, handles corner correction,
+/// ground snapping, and landing detection.
+///
+/// **Ghost artifact fix**: Only writes to `Position` (not `Transform`).
+/// Avian's SyncPlugin handles Position → Transform sync, eliminating
+/// the one-frame desync that caused the shadow rectangle artifact.
 pub(crate) fn move_controllers(
     time: Res<Time>,
     one_way_platforms: Query<
@@ -310,7 +400,6 @@ pub(crate) fn move_controllers(
                 &mut LinearVelocity,
                 &PlatformerControllerConfig,
                 &mut PlatformerControllerRuntimeState,
-                &mut Transform,
             ),
             With<PlatformerController>,
         >,
@@ -334,13 +423,11 @@ pub(crate) fn move_controllers(
             mut next_velocity,
             config,
             runtime_snapshot,
-            mut next_translation,
         ) = {
             let mut controllers = controller_params.p1();
-            let (_, collider, position, rotation, velocity, config, runtime, transform) =
-                controllers
-                    .get_mut(entity)
-                    .expect("controller entity should remain alive during movement");
+            let (_, collider, position, rotation, velocity, config, runtime) = controllers
+                .get_mut(entity)
+                .expect("controller entity should remain alive during movement");
             (
                 collider.clone(),
                 position.0,
@@ -350,7 +437,6 @@ pub(crate) fn move_controllers(
                 velocity.0,
                 config.clone(),
                 runtime.clone(),
-                transform.translation,
             )
         };
 
@@ -388,8 +474,6 @@ pub(crate) fn move_controllers(
         };
 
         next_position = output.position;
-        next_translation.x = output.position.x;
-        next_translation.y = output.position.y;
         next_velocity = output.projected_velocity;
 
         let was_grounded = runtime_snapshot.pre_ground.is_some();
@@ -429,7 +513,6 @@ pub(crate) fn move_controllers(
 
             if let Some(snap_ground) = snap_contacts.ground.as_ref() {
                 next_position.y -= snap_ground.distance;
-                next_translation.y = next_position.y;
                 contacts = probe_contacts(
                     entity,
                     &collider,
@@ -444,15 +527,69 @@ pub(crate) fn move_controllers(
                     runtime_snapshot.drop_through_remaining > 0.0,
                     delta_secs,
                 );
+            } else if config.corner_correction.ledge_assist_distance > 0.0
+                && !was_grounded
+                && next_velocity.y <= 0.0
+            {
+                // Ledge assist: nudge horizontally to land on ledge edges
+                let preferred_sign =
+                    sign_or_fallback(next_velocity.x, runtime_snapshot.facing_sign);
+                let signs = [preferred_sign, -preferred_sign];
+                let step = config.corner_correction.step_size.max(1.0);
+                let steps = (config.corner_correction.ledge_assist_distance / step)
+                    .ceil()
+                    .max(1.0) as usize;
+
+                'assist: for s in 1..=steps {
+                    let offset =
+                        (s as f32 * step).min(config.corner_correction.ledge_assist_distance);
+                    for sign in signs {
+                        let candidate = next_position + Vec2::new(sign * offset, 0.0);
+                        let assist_contacts = probe_contacts(
+                            entity,
+                            &collider,
+                            candidate,
+                            rotation,
+                            next_velocity,
+                            &config,
+                            &runtime_snapshot,
+                            &controller_params.p0().spatial_query,
+                            &surfaces,
+                            config
+                                .sensing
+                                .ground_snap_distance
+                                .max(config.sensing.ground_probe_distance),
+                            runtime_snapshot.drop_through_remaining > 0.0,
+                            delta_secs,
+                        );
+                        if let Some(snap_ground) = assist_contacts.ground.as_ref() {
+                            next_position = candidate + Vec2::new(0.0, -snap_ground.distance);
+                            contacts = probe_contacts(
+                                entity,
+                                &collider,
+                                next_position,
+                                rotation,
+                                next_velocity,
+                                &config,
+                                &runtime_snapshot,
+                                &controller_params.p0().spatial_query,
+                                &surfaces,
+                                config.sensing.ground_probe_distance,
+                                runtime_snapshot.drop_through_remaining > 0.0,
+                                delta_secs,
+                            );
+                            break 'assist;
+                        }
+                    }
+                }
             }
         }
 
         let mut controllers = controller_params.p1();
-        let (_, _, mut position, _, mut velocity, _, mut runtime, mut transform) = controllers
+        let (_, _, mut position, _, mut velocity, _, mut runtime) = controllers
             .get_mut(entity)
             .expect("controller entity should remain alive during movement writeback");
         position.0 = next_position;
-        transform.translation = next_translation;
         velocity.0 = next_velocity;
         runtime.ground = contacts.ground.clone();
         runtime.left_wall = contacts.left_wall.clone();

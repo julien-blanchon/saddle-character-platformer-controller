@@ -2,10 +2,11 @@ use avian2d::prelude::LinearVelocity;
 use bevy::prelude::*;
 
 use crate::{
-    AirJumpConsumed, DashStarted, JumpStarted, Landed, PlatformerController,
-    PlatformerControllerConfig, PlatformerControllerState, PlatformerMotionPhase,
-    PlatformerMovementIntent, WallJumpStarted,
-    components::PlatformerControllerRuntimeState,
+    AirJumpConsumed, DashStarted, GrappleAttached, GrappleDetached, GroundPoundImpact,
+    GroundPoundStarted, JumpStarted, Landed, PlatformerController, PlatformerControllerConfig,
+    PlatformerControllerState, PlatformerMotionPhase, PlatformerMovementIntent, WallClingStarted,
+    WallJumpStarted,
+    components::{PlatformerControllerRuntimeState, PlatformerGrapplePhase},
     helpers::{wall_contact_from_hits, wall_input_matches},
 };
 
@@ -46,10 +47,28 @@ pub(crate) fn sync_controller_state(
         state.wall_jump_lock_remaining = runtime.wall_jump_lock_remaining;
         state.dash_time_remaining = runtime.dash_time_remaining;
         state.dash_cooldown_remaining = runtime.dash_cooldown_remaining;
-        state.phase = if runtime.dash_time_remaining > 0.0 {
+        state.ground_pound_active = runtime.ground_pound_active
+            || runtime.ground_pound_hover_remaining > 0.0
+            || runtime.ground_pound_impact_stun > 0.0;
+        state.wall_cling_remaining = runtime.wall_cling_remaining;
+        state.grapple_phase = runtime.grapple_phase;
+        state.surface_modifier = runtime.surface_modifier.clone();
+
+        let is_wall_clinging = runtime.wall_cling_remaining > 0.0;
+
+        state.phase = if runtime.ground_pound_active
+            || runtime.ground_pound_hover_remaining > 0.0
+            || runtime.ground_pound_impact_stun > 0.0
+        {
+            PlatformerMotionPhase::GroundPounding
+        } else if !matches!(runtime.grapple_phase, PlatformerGrapplePhase::Idle) {
+            PlatformerMotionPhase::Grappling
+        } else if runtime.dash_time_remaining > 0.0 {
             PlatformerMotionPhase::Dashing
         } else if is_grounded {
             PlatformerMotionPhase::Grounded
+        } else if is_wall_clinging {
+            PlatformerMotionPhase::WallClinging
         } else if wall_sliding {
             PlatformerMotionPhase::WallSliding
         } else if velocity.y > config.jump.apex_velocity_threshold {
@@ -77,6 +96,11 @@ pub(crate) fn emit_messages(
     mut dash_started: MessageWriter<DashStarted>,
     mut landed: MessageWriter<Landed>,
     mut air_jump_consumed: MessageWriter<AirJumpConsumed>,
+    mut ground_pound_started: MessageWriter<GroundPoundStarted>,
+    mut ground_pound_impact: MessageWriter<GroundPoundImpact>,
+    mut wall_cling_started: MessageWriter<WallClingStarted>,
+    mut grapple_attached: MessageWriter<GrappleAttached>,
+    mut grapple_detached: MessageWriter<GrappleDetached>,
 ) {
     for (entity, mut runtime) in &mut query {
         if let Some(pending_jump) = runtime.pending_jump.take() {
@@ -117,6 +141,34 @@ pub(crate) fn emit_messages(
                 entity,
                 impact_speed,
                 support_entity: runtime.pending_landed_support.take(),
+            });
+        }
+
+        if runtime.pending_ground_pound_started {
+            runtime.pending_ground_pound_started = false;
+            ground_pound_started.write(GroundPoundStarted { entity });
+        }
+
+        if let Some(impact_speed) = runtime.pending_ground_pound_impact_speed.take() {
+            ground_pound_impact.write(GroundPoundImpact {
+                entity,
+                impact_speed,
+            });
+        }
+
+        if let Some(side) = runtime.pending_wall_cling_started.take() {
+            wall_cling_started.write(WallClingStarted { entity, side });
+        }
+
+        if let Some(target) = runtime.pending_grapple_started.take() {
+            grapple_attached.write(GrappleAttached { entity, target });
+        }
+
+        if runtime.pending_grapple_detached {
+            runtime.pending_grapple_detached = false;
+            grapple_detached.write(GrappleDetached {
+                entity,
+                velocity: Vec2::ZERO,
             });
         }
     }

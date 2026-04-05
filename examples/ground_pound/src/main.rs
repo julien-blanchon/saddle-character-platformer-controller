@@ -1,27 +1,26 @@
-//! Platformer controller — basic example
+//! Platformer controller — ground pound example
 //!
-//! Shows the minimum setup for a 2D platformer character: physics plugin,
-//! controller plugin, a player entity with the controller bundle, flat ground
-//! with a few platforms, and keyboard-driven intent.
+//! Demonstrates the ground pound mechanic: hover briefly mid-air, then slam
+//! downward at high speed. Land on elevated platforms and use ground pound
+//! to smash back down. The player color changes to red during the slam.
+//!
+//! Controls:
+//!   A / D or ←/→  — move
+//!   Space          — jump (hold for higher)
+//!   Shift          — dash
+//!   Q              — ground pound (mid-air)
+//!   S / ↓          — drop through one-way platforms
 
 use avian2d::prelude::*;
 use bevy::{app::AppExit, camera::ScalingMode, prelude::*, window::WindowResolution};
 use saddle_character_platformer_controller::{
     PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerPlugin,
-    PlatformerControllerState, PlatformerControllerSystems, PlatformerMotionPhase,
-    PlatformerMovementIntent,
+    PlatformerControllerState, PlatformerControllerSystems, PlatformerGroundPoundConfig,
+    PlatformerMotionPhase, PlatformerMovementIntent,
 };
 use saddle_pane::prelude::*;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const PLAYER_SIZE: Vec2 = Vec2::new(18.0, 30.0);
-
-// ---------------------------------------------------------------------------
-// Components
-// ---------------------------------------------------------------------------
 
 #[derive(Component)]
 struct Player;
@@ -31,77 +30,59 @@ struct FollowCamera {
     smoothing: f32,
 }
 
-// ---------------------------------------------------------------------------
-// Pane — live-tweak parameters
-// ---------------------------------------------------------------------------
-
 #[derive(Resource, Debug, Clone, PartialEq, Pane)]
-#[pane(title = "Platformer — Basic", position = "top-right")]
-struct BasicPane {
-    #[pane(slider, min = 120.0, max = 360.0, step = 1.0)]
-    max_speed: f32,
-    #[pane(slider, min = 40.0, max = 140.0, step = 1.0)]
-    jump_height: f32,
-    #[pane(slider, min = 0.2, max = 0.8, step = 0.01)]
-    time_to_apex: f32,
-    #[pane(slider, min = 0.0, max = 0.25, step = 0.01)]
-    coyote_time: f32,
-    #[pane(slider, min = 0.0, max = 0.25, step = 0.01)]
-    jump_buffer_time: f32,
-    #[pane(slider, min = 0, max = 3, step = 1)]
-    max_air_jumps: u32,
+#[pane(title = "Ground Pound", position = "top-right")]
+struct GroundPoundPane {
+    #[pane(slider, min = 0.0, max = 0.3, step = 0.01)]
+    hover_duration: f32,
+    #[pane(slider, min = 200.0, max = 1200.0, step = 10.0)]
+    fall_speed: f32,
+    #[pane(slider, min = 0.0, max = 0.4, step = 0.01)]
+    impact_stun: f32,
+    #[pane(checkbox)]
+    cancel_horizontal: bool,
     #[pane(monitor)]
     phase: String,
     #[pane(monitor)]
     grounded: bool,
+    #[pane(monitor)]
+    velocity_y: f32,
 }
 
-impl Default for BasicPane {
+impl Default for GroundPoundPane {
     fn default() -> Self {
+        let gp = PlatformerGroundPoundConfig::default();
         Self {
-            max_speed: 240.0,
-            jump_height: 88.0,
-            time_to_apex: 0.4,
-            coyote_time: 0.11,
-            jump_buffer_time: 0.12,
-            max_air_jumps: 1,
+            hover_duration: gp.hover_duration,
+            fall_speed: gp.fall_speed,
+            impact_stun: gp.impact_stun_duration,
+            cancel_horizontal: gp.cancel_horizontal_speed,
             phase: "Grounded".into(),
             grounded: false,
+            velocity_y: 0.0,
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// System sets for ordering
-// ---------------------------------------------------------------------------
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum DemoSystems {
     DriveIntent,
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
-
 fn main() -> AppExit {
     App::new()
-        // --- Window & rendering ---
         .insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "platformer_controller / basic".into(),
+                title: "platformer_controller / ground_pound".into(),
                 resolution: WindowResolution::new(1440, 900),
                 ..default()
             }),
             ..default()
         }))
-        // --- Physics ---
         .insert_resource(Time::<Fixed>::from_hz(60.0))
         .add_plugins(PhysicsPlugins::default().with_length_unit(20.0))
-        // --- Platformer controller ---
         .add_plugins(PlatformerControllerPlugin::always_on(FixedUpdate))
-        // --- Pane (live-tweak UI) ---
         .add_plugins((
             bevy_flair::FlairPlugin,
             bevy_input_focus::InputDispatchPlugin,
@@ -109,13 +90,11 @@ fn main() -> AppExit {
             bevy_input_focus::tab_navigation::TabNavigationPlugin,
             PanePlugin,
         ))
-        .register_pane::<BasicPane>()
-        // --- Ordering: keyboard intent runs before the controller reads it ---
+        .register_pane::<GroundPoundPane>()
         .configure_sets(
             FixedUpdate,
             DemoSystems::DriveIntent.before(PlatformerControllerSystems::ReadIntent),
         )
-        // --- Systems ---
         .add_systems(Startup, setup_scene)
         .add_systems(
             FixedUpdate,
@@ -126,18 +105,13 @@ fn main() -> AppExit {
         .run()
 }
 
-// ---------------------------------------------------------------------------
-// Scene setup — camera, player, level geometry
-// ---------------------------------------------------------------------------
-
 fn setup_scene(mut commands: Commands) {
-    // Camera
     commands.spawn((
         Name::new("Camera"),
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::FixedVertical {
-                viewport_height: 320.0,
+                viewport_height: 400.0,
             },
             ..OrthographicProjection::default_2d()
         }),
@@ -145,19 +119,17 @@ fn setup_scene(mut commands: Commands) {
         FollowCamera { smoothing: 8.0 },
     ));
 
-    // Player — the controller bundle provides all physics + state components
+    // Player
     let config = PlatformerControllerConfig {
-        movement: saddle_character_platformer_controller::MovementConfig {
-            max_speed: 240.0,
-            ..default()
-        },
         jump: saddle_character_platformer_controller::PlatformerJumpConfig {
-            height: 88.0,
-            time_to_apex: 0.4,
-            coyote_time: 0.11,
-            jump_buffer_time: 0.12,
             max_air_jumps: 1,
             ..default()
+        },
+        ground_pound: PlatformerGroundPoundConfig {
+            hover_duration: 0.08,
+            fall_speed: 600.0,
+            cancel_horizontal_speed: true,
+            impact_stun_duration: 0.1,
         },
         ..default()
     };
@@ -174,46 +146,84 @@ fn setup_scene(mut commands: Commands) {
             Collider::rectangle(PLAYER_SIZE.x, PLAYER_SIZE.y),
             config,
         )
-        .with_transform(Transform::from_xyz(-270.0, -40.0, 10.0)),
+        .with_transform(Transform::from_xyz(-200.0, -20.0, 10.0)),
     ));
 
     // --- Level geometry ---
 
-    // Ground
+    // Ground floor
     spawn_block(
         &mut commands,
         "Ground",
         Vec2::new(0.0, -150.0),
-        Vec2::new(920.0, 38.0),
+        Vec2::new(800.0, 38.0),
         Color::srgb(0.20, 0.22, 0.26),
     );
-    // Step
+
+    // Elevated platforms at various heights — jump up and ground-pound down
     spawn_block(
         &mut commands,
-        "Step",
-        Vec2::new(-85.0, -86.0),
-        Vec2::new(110.0, 28.0),
-        Color::srgb(0.30, 0.36, 0.43),
+        "Low Platform",
+        Vec2::new(-160.0, -80.0),
+        Vec2::new(120.0, 20.0),
+        Color::srgb(0.32, 0.38, 0.48),
     );
-    // Tower
     spawn_block(
         &mut commands,
-        "Tower",
-        Vec2::new(175.0, -28.0),
-        Vec2::new(80.0, 160.0),
-        Color::srgb(0.33, 0.40, 0.49),
+        "Mid Platform",
+        Vec2::new(0.0, -20.0),
+        Vec2::new(120.0, 20.0),
+        Color::srgb(0.38, 0.44, 0.54),
     );
-    // Ramp (rotated)
+    spawn_block(
+        &mut commands,
+        "High Platform",
+        Vec2::new(160.0, 40.0),
+        Vec2::new(120.0, 20.0),
+        Color::srgb(0.44, 0.50, 0.60),
+    );
+    spawn_block(
+        &mut commands,
+        "Top Platform",
+        Vec2::new(0.0, 100.0),
+        Vec2::new(160.0, 20.0),
+        Color::srgb(0.50, 0.56, 0.66),
+    );
+
+    // Walls to contain the area
+    spawn_block(
+        &mut commands,
+        "Left Wall",
+        Vec2::new(-380.0, 0.0),
+        Vec2::new(20.0, 400.0),
+        Color::srgb(0.18, 0.20, 0.24),
+    );
+    spawn_block(
+        &mut commands,
+        "Right Wall",
+        Vec2::new(380.0, 0.0),
+        Vec2::new(20.0, 400.0),
+        Color::srgb(0.18, 0.20, 0.24),
+    );
+
+    // On-screen instructions
     commands.spawn((
-        Name::new("Ramp"),
-        Sprite {
-            color: Color::srgb(0.28, 0.48, 0.42),
-            custom_size: Some(Vec2::new(200.0, 20.0)),
+        Name::new("Instructions"),
+        Text::new(
+            "A/D: Move  |  Space: Jump  |  Q: Ground Pound (mid-air)\n\
+             Jump to a platform, then press Q to slam downward!",
+        ),
+        TextFont {
+            font_size: 16.0,
             ..default()
         },
-        Transform::from_xyz(5.0, -118.0, 0.0).with_rotation(Quat::from_rotation_z(0.32)),
-        RigidBody::Static,
-        Collider::rectangle(200.0, 20.0),
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(16.0),
+            bottom: Val::Px(16.0),
+            ..default()
+        },
     ));
 }
 
@@ -231,10 +241,6 @@ fn spawn_block(commands: &mut Commands, name: &str, center: Vec2, size: Vec2, co
     ));
 }
 
-// ---------------------------------------------------------------------------
-// Keyboard → intent
-// ---------------------------------------------------------------------------
-
 fn drive_keyboard_intent(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut intent: Single<&mut PlatformerMovementIntent, With<Player>>,
@@ -250,38 +256,29 @@ fn drive_keyboard_intent(
     intent.ground_pound_pressed = keyboard.just_pressed(KeyCode::KeyQ);
 }
 
-// ---------------------------------------------------------------------------
-// Pane ←→ config sync
-// ---------------------------------------------------------------------------
-
 fn sync_pane_to_config(
-    pane: Res<BasicPane>,
+    pane: Res<GroundPoundPane>,
     mut controllers: Query<&mut PlatformerControllerConfig, With<Player>>,
 ) {
     if !pane.is_changed() {
         return;
     }
     for mut config in &mut controllers {
-        config.movement.max_speed = pane.max_speed;
-        config.jump.height = pane.jump_height;
-        config.jump.time_to_apex = pane.time_to_apex.max(0.01);
-        config.jump.coyote_time = pane.coyote_time;
-        config.jump.jump_buffer_time = pane.jump_buffer_time;
-        config.jump.max_air_jumps = pane.max_air_jumps;
+        config.ground_pound.hover_duration = pane.hover_duration;
+        config.ground_pound.fall_speed = pane.fall_speed;
+        config.ground_pound.impact_stun_duration = pane.impact_stun;
+        config.ground_pound.cancel_horizontal_speed = pane.cancel_horizontal;
     }
 }
 
 fn update_pane_monitors(
     player: Single<&PlatformerControllerState, With<Player>>,
-    mut pane: ResMut<BasicPane>,
+    mut pane: ResMut<GroundPoundPane>,
 ) {
-    pane.grounded = player.is_grounded;
     pane.phase = format!("{:?}", player.phase);
+    pane.grounded = player.is_grounded;
+    pane.velocity_y = player.velocity.y;
 }
-
-// ---------------------------------------------------------------------------
-// Camera follow
-// ---------------------------------------------------------------------------
 
 fn follow_camera(
     time: Res<Time>,
@@ -294,10 +291,6 @@ fn follow_camera(
     let blend = 1.0 - (-camera.0.smoothing * time.delta_secs()).exp();
     camera.1.translation = camera.1.translation.lerp(desired, blend);
 }
-
-// ---------------------------------------------------------------------------
-// Visual feedback — tint player sprite by motion phase
-// ---------------------------------------------------------------------------
 
 fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), With<Player>>) {
     player.1.color = match player.0.phase {
