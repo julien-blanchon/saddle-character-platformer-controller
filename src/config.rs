@@ -7,14 +7,11 @@ use crate::PlatformVelocityInheritance;
 pub struct PlatformerControllerConfig {
     pub movement: MovementConfig,
     pub jump: PlatformerJumpConfig,
-    pub dash: PlatformerDashConfig,
     pub corner_correction: PlatformerCornerCorrectionConfig,
     pub walls: PlatformerWallConfig,
     pub sensing: PlatformerSensingConfig,
     pub platforms: PlatformInteractionConfig,
     pub move_and_slide: MoveAndSlideTuning,
-    pub ground_pound: PlatformerGroundPoundConfig,
-    pub grapple: PlatformerGrappleConfig,
 }
 
 #[derive(Clone, Debug, Reflect)]
@@ -84,42 +81,6 @@ impl PlatformerJumpConfig {
 
     pub fn jump_speed(&self) -> f32 {
         self.base_gravity() * self.time_to_apex.max(0.001)
-    }
-}
-
-#[derive(Clone, Debug, Reflect)]
-#[reflect(Debug, Default)]
-pub struct PlatformerDashConfig {
-    pub distance: f32,
-    pub duration: f32,
-    pub cooldown: f32,
-    pub max_charges: u32,
-    pub refill_on_ground: bool,
-    pub allow_ground_dash: bool,
-    pub preserve_vertical_velocity: bool,
-    pub direction_input_threshold: f32,
-    pub exit_speed_scale: f32,
-}
-
-impl Default for PlatformerDashConfig {
-    fn default() -> Self {
-        Self {
-            distance: 84.0,
-            duration: 0.16,
-            cooldown: 0.12,
-            max_charges: 1,
-            refill_on_ground: true,
-            allow_ground_dash: true,
-            preserve_vertical_velocity: false,
-            direction_input_threshold: 0.2,
-            exit_speed_scale: 0.35,
-        }
-    }
-}
-
-impl PlatformerDashConfig {
-    pub fn dash_speed(&self) -> f32 {
-        self.distance.max(0.0) / self.duration.max(0.001)
     }
 }
 
@@ -241,69 +202,6 @@ impl Default for MoveAndSlideTuning {
             depenetration_iterations: 4,
             max_depenetration_error: 0.001,
             max_planes: 16,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Reflect)]
-#[reflect(Debug, Default)]
-pub struct PlatformerGroundPoundConfig {
-    /// Brief hover before slamming (seconds).
-    pub hover_duration: f32,
-    /// Downward speed during the slam.
-    pub fall_speed: f32,
-    /// Whether to cancel horizontal velocity on activation.
-    pub cancel_horizontal_speed: bool,
-    /// Brief freeze on impact before movement resumes.
-    pub impact_stun_duration: f32,
-}
-
-impl Default for PlatformerGroundPoundConfig {
-    fn default() -> Self {
-        Self {
-            hover_duration: 0.08,
-            fall_speed: 600.0,
-            cancel_horizontal_speed: true,
-            impact_stun_duration: 0.1,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Reflect)]
-#[reflect(Debug, Default)]
-pub struct PlatformerGrappleConfig {
-    /// Maximum distance to search for a grapple point.
-    pub max_range: f32,
-    /// Speed at which the character is pulled toward the point (0.0 = pure swing).
-    pub pull_speed: f32,
-    /// Velocity scale applied on detach (momentum boost).
-    pub detach_speed_boost: f32,
-    /// Angle tolerance (radians) for aim-assist when finding grapple points.
-    pub aim_assist_angle: f32,
-    /// Minimum rope length (how close you can reel in).
-    pub min_rope_length: f32,
-    /// Speed at which the rope retracts per second.
-    pub retract_speed: f32,
-    /// Speed at which the rope extends per second.
-    pub extend_speed: f32,
-    /// Gravity multiplier while swinging on the rope (1.0 = normal gravity).
-    pub swing_gravity_multiplier: f32,
-    /// How much horizontal input affects the swing (0.0 = no influence).
-    pub swing_input_force: f32,
-}
-
-impl Default for PlatformerGrappleConfig {
-    fn default() -> Self {
-        Self {
-            max_range: 300.0,
-            pull_speed: 400.0,
-            detach_speed_boost: 1.3,
-            aim_assist_angle: 0.35,
-            min_rope_length: 20.0,
-            retract_speed: 200.0,
-            extend_speed: 100.0,
-            swing_gravity_multiplier: 1.0,
-            swing_input_force: 300.0,
         }
     }
 }

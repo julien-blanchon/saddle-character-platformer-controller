@@ -7,7 +7,6 @@
 //! Controls:
 //!   A / D or ←/→  — move
 //!   Space          — jump (hold for higher)
-//!   Shift          — dash
 //!   Q              — ground pound (mid-air)
 //!   S / ↓          — drop through one-way platforms
 
@@ -15,8 +14,10 @@ use avian2d::prelude::*;
 use bevy::{app::AppExit, camera::ScalingMode, prelude::*, window::WindowResolution};
 use saddle_character_platformer_controller::{
     PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerPlugin,
-    PlatformerControllerState, PlatformerControllerSystems, PlatformerGroundPoundConfig,
-    PlatformerMotionPhase, PlatformerMovementIntent,
+    PlatformerControllerState, PlatformerControllerSystems, PlatformerGroundPoundBundle,
+    PlatformerGroundPoundConfig, PlatformerGroundPoundIntent, PlatformerGroundPoundPhase,
+    PlatformerGroundPoundPlugin, PlatformerGroundPoundState, PlatformerMotionPhase,
+    PlatformerMovementIntent,
 };
 use saddle_pane::prelude::*;
 
@@ -82,7 +83,10 @@ fn main() -> AppExit {
         }))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
         .add_plugins(PhysicsPlugins::default().with_length_unit(20.0))
-        .add_plugins(PlatformerControllerPlugin::always_on(FixedUpdate))
+        .add_plugins((
+            PlatformerControllerPlugin::always_on(FixedUpdate),
+            PlatformerGroundPoundPlugin::always_on(FixedUpdate),
+        ))
         .add_plugins((
             bevy_flair::FlairPlugin,
             bevy_input_focus::InputDispatchPlugin,
@@ -125,12 +129,6 @@ fn setup_scene(mut commands: Commands) {
             max_air_jumps: 1,
             ..default()
         },
-        ground_pound: PlatformerGroundPoundConfig {
-            hover_duration: 0.08,
-            fall_speed: 600.0,
-            cancel_horizontal_speed: true,
-            impact_stun_duration: 0.1,
-        },
         ..default()
     };
 
@@ -147,6 +145,7 @@ fn setup_scene(mut commands: Commands) {
             config,
         )
         .with_transform(Transform::from_xyz(-200.0, -20.0, 10.0)),
+        PlatformerGroundPoundBundle::default(),
     ));
 
     // --- Level geometry ---
@@ -243,41 +242,45 @@ fn spawn_block(commands: &mut Commands, name: &str, center: Vec2, size: Vec2, co
 
 fn drive_keyboard_intent(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut intent: Single<&mut PlatformerMovementIntent, With<Player>>,
+    mut movement_intent: Single<&mut PlatformerMovementIntent, With<Player>>,
+    mut ground_pound_intent: Single<&mut PlatformerGroundPoundIntent, With<Player>>,
 ) {
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
 
-    intent.move_axis = right as i8 as f32 - left as i8 as f32;
-    intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
-    intent.jump_held = keyboard.pressed(KeyCode::Space);
-    intent.dash_pressed = keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
-    intent.ground_pound_pressed = keyboard.just_pressed(KeyCode::KeyQ);
+    movement_intent.move_axis = right as i8 as f32 - left as i8 as f32;
+    movement_intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
+    movement_intent.jump_held = keyboard.pressed(KeyCode::Space);
+    movement_intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+    ground_pound_intent.pressed = keyboard.just_pressed(KeyCode::KeyQ);
 }
 
 fn sync_pane_to_config(
     pane: Res<GroundPoundPane>,
-    mut controllers: Query<&mut PlatformerControllerConfig, With<Player>>,
+    mut ground_pounds: Query<&mut PlatformerGroundPoundConfig, With<Player>>,
 ) {
     if !pane.is_changed() {
         return;
     }
-    for mut config in &mut controllers {
-        config.ground_pound.hover_duration = pane.hover_duration;
-        config.ground_pound.fall_speed = pane.fall_speed;
-        config.ground_pound.impact_stun_duration = pane.impact_stun;
-        config.ground_pound.cancel_horizontal_speed = pane.cancel_horizontal;
+    for mut config in &mut ground_pounds {
+        config.hover_duration = pane.hover_duration;
+        config.fall_speed = pane.fall_speed;
+        config.impact_stun_duration = pane.impact_stun;
+        config.cancel_horizontal_speed = pane.cancel_horizontal;
     }
 }
 
 fn update_pane_monitors(
-    player: Single<&PlatformerControllerState, With<Player>>,
+    player: Single<(&PlatformerControllerState, &PlatformerGroundPoundState), With<Player>>,
     mut pane: ResMut<GroundPoundPane>,
 ) {
-    pane.phase = format!("{:?}", player.phase);
-    pane.grounded = player.is_grounded;
-    pane.velocity_y = player.velocity.y;
+    pane.phase = if player.1.phase != PlatformerGroundPoundPhase::Idle {
+        format!("{:?}", player.1.phase)
+    } else {
+        format!("{:?}", player.0.phase)
+    };
+    pane.grounded = player.0.is_grounded;
+    pane.velocity_y = player.0.velocity.y;
 }
 
 fn follow_camera(
@@ -292,17 +295,23 @@ fn follow_camera(
     camera.1.translation = camera.1.translation.lerp(desired, blend);
 }
 
-fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), With<Player>>) {
-    player.1.color = match player.0.phase {
-        PlatformerMotionPhase::Grounded => Color::srgb(0.94, 0.58, 0.22),
-        PlatformerMotionPhase::Dashing => Color::srgb(0.98, 0.28, 0.48),
-        PlatformerMotionPhase::Rising => Color::srgb(0.98, 0.82, 0.30),
-        PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
-        PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),
-        PlatformerMotionPhase::WallSliding => Color::srgb(0.42, 0.76, 0.96),
-        PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
-        PlatformerMotionPhase::GroundPounding => Color::srgb(0.88, 0.18, 0.18),
-        PlatformerMotionPhase::Grappling => Color::srgb(0.60, 0.92, 0.30),
-        PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
+fn tint_player(
+    mut player: Single<
+        (&PlatformerControllerState, &PlatformerGroundPoundState, &mut Sprite),
+        With<Player>,
+    >,
+) {
+    player.2.color = if player.1.phase != PlatformerGroundPoundPhase::Idle {
+        Color::srgb(0.88, 0.18, 0.18)
+    } else {
+        match player.0.phase {
+            PlatformerMotionPhase::Grounded => Color::srgb(0.94, 0.58, 0.22),
+            PlatformerMotionPhase::Rising => Color::srgb(0.98, 0.82, 0.30),
+            PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
+            PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),
+            PlatformerMotionPhase::WallSliding => Color::srgb(0.42, 0.76, 0.96),
+            PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
+            PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
+        }
     };
 }

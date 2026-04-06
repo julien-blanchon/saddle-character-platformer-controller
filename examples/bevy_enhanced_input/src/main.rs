@@ -3,7 +3,7 @@ use saddle_character_platformer_controller_example_support as support;
 use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy_enhanced_input::prelude::{Cancel as InputCancel, Press as InputPress, *};
-use saddle_character_platformer_controller::PlatformerMovementIntent;
+use saddle_character_platformer_controller::{PlatformerDashIntent, PlatformerMovementIntent};
 use support::{DemoFixedSystems, DemoPlayer, DemoScene};
 
 #[derive(Debug, InputAction)]
@@ -148,10 +148,10 @@ fn cache_drop_press(
 
 fn cache_dash_press(
     trigger: On<Start<DashAction>>,
-    mut query: Query<&mut PlatformerMovementIntent, With<DemoPlayer>>,
+    mut query: Query<&mut PlatformerDashIntent, With<DemoPlayer>>,
 ) {
     if let Ok(mut intent) = query.get_mut(trigger.context) {
         let _ = trigger;
-        intent.dash_pressed = true;
+        intent.pressed = true;
     }
 }

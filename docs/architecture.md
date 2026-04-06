@@ -1,44 +1,72 @@
 # Architecture
 
-## Controller Model
+## Modular Controller Model
 
-`saddle-character-platformer-controller` uses a **kinematic Avian2D body** driven by `MoveAndSlide`, with contact sensing handled as a first-class subsystem through explicit shape casts.
+`saddle-character-platformer-controller` now has two layers:
+
+- a **core locomotion plugin** for movement, jump, wall interaction, slopes, moving platforms, one-way platforms, and surface modifiers
+- **optional ability plugins** for dash, ground pound, and grapple
+
+This split keeps the base API small:
+
+- `PlatformerControllerBundle` only contains core controller components
+- `PlatformerControllerConfig`, `PlatformerMovementIntent`, and `PlatformerControllerState` are core-only
+- ability-specific config, intent, state, runtime data, and messages live in the matching ability module
+
+The design goal is to let one game use only the core controller, another add dash, and another install all three ability packs without paying for unrelated state on every entity.
+
+## Why A Kinematic Controller
+
+The crate uses a **kinematic Avian2D body** driven by `MoveAndSlide`, with contact sensing handled as a first-class subsystem through explicit shape casts.
 
 Why this model:
 
-- platformer feel usually depends on authored acceleration, gravity shaping, and buffered input windows rather than rigid-body impulses
+- platformer feel depends on authored acceleration, gravity shaping, and buffered input windows more than rigid-body impulses
 - kinematic motion keeps the lateral and jump rules explicit and easy to test
-- Avian2D still provides the collision, shapecast, and depenetration primitives needed for slopes, moving platforms, and one-way platform filtering
+- Avian2D still provides the collision, shapecast, and depenetration primitives needed for slopes, moving platforms, and one-way filtering
 
-This crate does **not** try to simulate a dynamic physics avatar and then tune forces into a platformer. It uses Avian as the collision and query backend while the movement rules stay deterministic and gameplay-facing.
+The crate does not try to simulate a dynamic avatar and then tune forces into a platformer. Avian is the collision/query backend while the movement rules stay deterministic and gameplay-facing.
 
-## System Ordering
+## Core System Ordering
 
 The runtime exposes explicit phases through `PlatformerControllerSystems`:
 
 1. `ReadIntent`
 2. `SenseContacts`
-3. `ApplyMovement`
-4. `ApplyDash`
-5. `ApplyGroundPound`
+3. `ResolveDirectives`
+4. `ApplyMovement`
+5. `ApplyAbilityMotion`
 6. `ApplyJump`
 7. `WallInteractions`
-8. `ApplyGrapple`
-9. `MoveControllers`
-10. `SyncState`
+8. `MoveControllers`
+9. `SyncState`
 
 The order is intentional:
 
 - `ReadIntent` snapshots buffered player intent and decrements timers once per frame
 - `SenseContacts` samples the pre-move world state for coyote time, wall validity, and support motion
+- `ResolveDirectives` gives optional ability plugins or downstream systems a place to suppress parts of the core locomotion pass before it runs
 - `ApplyMovement` resolves horizontal acceleration against the current support policy
-- `ApplyDash` converts dash intent into a temporary authored movement phase before jump/gravity logic runs
-- `ApplyGroundPound` handles hover → slam → impact stun phases, overriding velocity during each
+- `ApplyAbilityMotion` is a reserved lane where ability plugins can author velocity before jump/gravity logic
 - `ApplyJump` resolves jump buffering, coyote jumps, air jumps, gravity shaping, terminal velocity clamping, and wall-jump launch
-- `WallInteractions` applies slide-specific downward clamping and wall-cling tracking after jump logic
-- `ApplyGrapple` handles grapple firing, pendulum swing physics, rope constraint, and detachment
+- `WallInteractions` applies wall-slide and wall-cling behavior after jump logic
 - `MoveControllers` performs the actual `MoveAndSlide` step, corner correction, ledge assist, ground snapping, and landing detection
-- `SyncState` publishes the readable state component and emits messages
+- `SyncState` publishes readable state components and emits messages
+
+## Ability Plugin Ordering
+
+Each optional ability plugin exposes its own `SystemSet` enum and plugs itself into the shared core schedule:
+
+- dash: `PlatformerDashSystems::{ResolveDirectives, ApplyDash, SyncState}`
+- ground pound: `PlatformerGroundPoundSystems::{ResolveDirectives, ApplyGroundPound, SyncState}`
+- grapple: `PlatformerGrappleSystems::{ResolveDirectives, ApplyGrapple, SyncState}`
+
+Those systems do two things:
+
+- write `PlatformerControllerDirectives` to temporarily suppress core locomotion work when an ability owns movement for the frame
+- maintain ability-specific runtime state and mirror that state onto public ability components
+
+This means the core controller does not need hardcoded fields like “remaining dashes” or “grapple phase” to support optional traversal packs.
 
 ## Contact Sensing
 
@@ -48,7 +76,7 @@ Ground sensing:
 
 - casts the controller collider downward with `SpatialQuery::shape_hits`
 - keeps only contacts whose normal satisfies `max_walkable_angle`
-- filters one-way platforms through `PlatformerOneWayPlatform`, the platform's up vector, current motion, and active drop-through timer
+- filters one-way platforms through `PlatformerOneWayPlatform`, the platform up vector, current motion, and the active drop-through timer
 
 Wall sensing:
 
@@ -58,7 +86,38 @@ Wall sensing:
 - rejects contacts whose vertical normal component is too large (`max_vertical_normal_y`)
 - rejects contacts that only touch the lower body near the feet (`max_contact_height_ratio`)
 
-This separation keeps small geometry noise from counting as a valid wall while letting slopes still count as ground.
+This separation keeps small geometry noise from counting as a valid wall while still letting slopes count as ground.
+
+## Core Runtime State
+
+The core runtime tracks only core bookkeeping:
+
+- jump buffer time remaining
+- coyote time remaining
+- wall-jump steering lock time remaining
+- one-way drop-through time remaining
+- remaining air jumps
+- support velocity and support entity tracking
+- pre-move and post-move ground/wall contacts
+- wall cling timers
+- surface modifier and pending core messages
+- `PlatformerControllerDirectives`
+
+The public `PlatformerControllerState` mirrors the gameplay-relevant subset of that data:
+
+- grounded status
+- motion phase
+- ground and wall contacts
+- support entity and support velocity
+- readable forgiveness timers
+- remaining air jumps
+- active surface modifier
+
+Ability packs mirror their own state on separate components:
+
+- `PlatformerDashState`
+- `PlatformerGroundPoundState`
+- `PlatformerGrappleState`
 
 ## Jump and Timer Design
 
@@ -67,23 +126,14 @@ The jump model is authored from **height** and **time to apex**:
 - `base_gravity = 2 * height / time_to_apex^2`
 - `jump_speed = base_gravity * time_to_apex`
 
-Vertical feel is then shaped with multipliers:
+Vertical feel is then shaped with:
 
 - rise gravity
 - fall gravity
-- low-jump gravity for early release
-- apex gravity for softer hang time near the top
+- low-jump gravity
+- apex gravity
 
-Forgiveness timers are tracked in runtime state:
-
-- `jump_buffer_remaining`
-- `coyote_time_remaining`
-- `wall_jump_lock_remaining`
-- `drop_through_remaining`
-- `dash_time_remaining`
-- `dash_cooldown_remaining`
-
-These timers are intentionally internal bookkeeping. Consumers observe the distilled public state component instead of manipulating timer internals directly.
+This keeps jump tuning in gameplay-facing units instead of arbitrary impulses.
 
 ## Moving Platform Policy
 
@@ -92,7 +142,7 @@ Support bodies are resolved from the best current ground contact.
 Velocity inheritance follows `PlatformVelocityInheritance`:
 
 - `Horizontal`: inherit only the platform's `x` motion
-- `Full`: inherit `x` and `y`
+- `Full`: inherit both axes
 - `None`: ignore support velocity
 
 Support velocity is derived in two ways:
@@ -102,37 +152,98 @@ Support velocity is derived in two ways:
 
 The controller stores the last support entity and its last sampled position so kinematic platforms can still contribute useful motion.
 
+## Ability Composition Policy
+
+Cross-ability arbitration is intentionally centralized in `PlatformerAbilityComposition` rather than spread across hardcoded if/else branches in multiple systems.
+
+The policy trait exposes two hooks:
+
+- `resolve_activation(requested, active)` decides whether a new activation request is allowed and whether any currently active abilities should be cancelled
+- `detach_grapple_on_jump(active)` decides whether jump input should detach grapple
+
+Default policy:
+
+- dash is blocked by active ground pound or grapple
+- ground pound is blocked by active dash or grapple
+- grapple is blocked by active dash or another grapple
+- grapple cancels active ground pound when it attaches
+- jump detaches grapple
+
+Consumers can replace the resource to author different arbitration without forking the plugin.
+
 ## Dash Model
 
-Dash intent is handled as a dedicated authored phase rather than as a one-frame impulse.
+Dash is implemented as an optional authored-motion layer, not a core controller phase.
 
-- dash direction prefers the explicit `dash_direction` vector when it exceeds `direction_input_threshold`
-- otherwise the runtime falls back to horizontal movement input, current lateral velocity, and finally the last facing sign
-- each dash consumes one authored charge from `remaining_dashes`
-- grounded contact can optionally refill those charges immediately through `dash.refill_on_ground`
-- while `dash_time_remaining > 0`, horizontal movement, jump resolution, and wall-slide clamping all yield to the dash velocity
+- dash direction prefers explicit `PlatformerDashIntent.direction` when it exceeds `direction_input_threshold`
+- otherwise it falls back to movement input, current lateral velocity, and finally facing sign
+- each dash consumes one charge from the dash runtime state
+- grounded contact can optionally refill charges via `refill_on_ground`
+- while active, dash suppresses core horizontal movement, jump logic, and wall interactions through `PlatformerControllerDirectives`
 
-This keeps dash behavior deterministic and easy to test while still leaving the input source fully game-defined.
+Because dash is its own plugin, entities without `PlatformerDashBundle` pay none of this state or logic.
+
+## Ground Pound Model
+
+Ground pound is a three-phase optional action:
+
+1. `Hovering`
+2. `Slamming`
+3. `ImpactStun`
+
+During those phases the plugin:
+
+- authors vertical velocity directly
+- optionally zeros horizontal velocity
+- suppresses core movement, jump logic, and wall interactions
+- emits `GroundPoundStarted` and `GroundPoundImpact`
+
+Its phase and timers are mirrored on `PlatformerGroundPoundState`, not on the core controller state.
+
+## Grapple Model
+
+Grapple is an optional pendulum-motion layer.
+
+Firing:
+
+- searches for the nearest `PlatformerGrapplePoint` within `max_range`
+- uses `aim_assist_angle` to accept nearby anchors in the aimed direction
+
+While attached:
+
+- gravity applies with `swing_gravity_multiplier`
+- horizontal input adds tangential force
+- rope length is clamped with retract/extend input
+- outward radial velocity is projected away to keep the body on the rope constraint
+- optional `pull_speed` can reel the player toward the anchor
+
+Detaching:
+
+- happens on explicit release or jump, depending on the composition policy
+- applies `detach_speed_boost` to carry momentum
+- emits `GrappleDetached`
+
+As with the other ability packs, grapple lives outside the core motion phase enum.
 
 ## One-Way Platform Policy
 
-One-way platforms are identified by the public marker component `PlatformerOneWayPlatform`.
+One-way platforms are identified by `PlatformerOneWayPlatform`.
 
 They block only when all of these are true:
 
 - drop-through is not currently active
-- the hit normal aligns with the platform's up direction strongly enough
+- the hit normal aligns strongly enough with the platform up direction
 - the controller is not moving upward through the platform
 
-The runtime does not try to reinterpret arbitrary sideways or inverted one-way platforms. The intended use is jump-through floors.
+The intended use is jump-through floors rather than arbitrary rotated one-way geometry.
 
 ## Slopes
 
-Slope handling is based on surface normals rather than special-case geometry.
+Slope handling is normal-based rather than geometry-special-cased.
 
 - walkability is determined by `max_walkable_angle`
-- the post-move pass can snap downward within `ground_snap_distance` when the controller is descending or settling
-- non-walkable slopes stay non-ground and are treated like walls or slide surfaces depending on their normals
+- the post-move pass can snap downward within `ground_snap_distance`
+- non-walkable slopes stay non-ground and are treated like walls or slide surfaces based on their normals
 
 ## Wall Interaction Rules
 
@@ -144,101 +255,59 @@ Wall sliding activates only when:
 
 Wall jumping:
 
-- launches away from the contacted wall using authored horizontal and vertical speeds
+- launches away from the contacted wall with authored horizontal and vertical speeds
 - clears jump buffer and coyote time
 - starts a short steering lock window
 
-During the steering lock window, horizontal input is blended by `wall_jump_steering_factor` instead of being ignored entirely. This keeps the behavior tunable between “hard lock” and “immediate air steer”.
+During the steering lock window, horizontal input is blended by `wall_jump_steering_factor` rather than being ignored entirely.
 
 ## Corner Correction and Ledge Assist
 
-Corner correction is applied inside the movement step rather than as a separate teleporting hack.
+Corner correction is applied inside the movement step.
 
 - after the initial `MoveAndSlide` pass, the runtime detects upward head-bonks that stripped too much vertical motion
-- it then retries the same move from small sideways offsets, using `corner_correction.step_size` up to `corner_correction.max_distance`
-- a retry is accepted only if it produces a meaningful height gain (`min_height_gain`)
+- it retries the same move from small sideways offsets using `corner_correction.step_size` up to `corner_correction.max_distance`
+- a retry is accepted only if it produces a meaningful height gain
 
 Ledge assist is the horizontal equivalent for landing:
 
 - when the character was airborne and barely misses a ledge edge while falling, the runtime tries small horizontal nudges
-- uses the same `step_size` increment up to `ledge_assist_distance`
-- only activates when the character was previously airborne (not when walking off a ledge, which should trigger coyote time instead)
-
-## Ground Pound
-
-Ground pound is a three-phase downward action:
-
-1. **Hover**: velocity is zeroed for `hover_duration` seconds (can be skipped with `0.0`)
-2. **Slam**: velocity is set to `(0, -fall_speed)` with optional horizontal cancellation
-3. **Impact stun**: on ground contact, movement freezes for `impact_stun_duration`
-
-The ground pound overrides all other movement and gravity logic during its active phases. It can be cancelled by dash activation. Fires `GroundPoundStarted` on activation and `GroundPoundImpact` on landing.
-
-## Grapple Hook
-
-The grapple implements pendulum swing physics:
-
-- **Firing**: aim-assisted search for the nearest `PlatformerGrapplePoint` within `max_range` and `aim_assist_angle`
-- **Swing**: gravity applies normally (scaled by `swing_gravity_multiplier`), horizontal input adds tangential force
-- **Rope constraint**: when the character reaches rope length, velocity is projected tangentially (radial-outward component removed)
-- **Pull**: optional `pull_speed` pulls the character toward the anchor
-- **Retract/extend**: player can shorten/lengthen the rope via intent
-
-Detaching (jump or explicit release) applies `detach_speed_boost` to current velocity for momentum carry.
+- it uses the same step size up to `ledge_assist_distance`
+- it only activates when the character was previously airborne
 
 ## Surface Modifiers
 
-`PlatformerSurfaceModifier` is a component attached to ground entities that modifies movement physics on contact:
+`PlatformerSurfaceModifier` is attached to ground entities and modifies movement physics on contact:
 
-- `friction_multiplier`: scales acceleration/deceleration (0.0 = ice, 1.0 = normal, >1.0 = sticky)
-- `surface_velocity`: constant velocity added while on the surface (conveyor belts)
-- `speed_multiplier`: scales maximum speed on the surface
+- `friction_multiplier`: scales acceleration and deceleration
+- `surface_velocity`: adds conveyor-style velocity
+- `speed_multiplier`: scales top speed on the surface
 
 The modifier is resolved each frame from the current ground contact entity.
 
 ## Wall Cling
 
-Wall cling is a timed mechanic that temporarily arrests downward motion on a wall:
+Wall cling is a timed mechanic layered into the core wall interaction pass:
 
 - activates when the character touches a valid wall while falling and `wall_cling_max_duration > 0`
-- during cling, gravity is scaled by `wall_cling_gravity_multiplier` (0.0 = full stop)
+- gravity is scaled by `wall_cling_gravity_multiplier`
 - after the cling timer expires, normal wall slide resumes
-- wall jump during cling launches away from the wall as normal
-- fires `WallClingStarted` message once on transition (not every frame)
+- wall jump during cling launches away as normal
+- the crate emits `WallClingStarted` once on transition
 
-## Debug Strategy
+## Debug and Verification Strategy
 
 `PlatformerControllerDebugPlugin` provides optional gizmo visualization for:
 
 - velocity vector
 - downward ground probe direction
-- left/right wall probe directions
+- left and right wall probe directions
 
-The public `PlatformerControllerState` also mirrors the important derived facts for BRP inspection and UI overlays:
+The intended verification surface is:
 
-- grounded status
-- motion phase
-- support entity and support velocity
-- buffered jump status
-- remaining air jumps
-- remaining dash charges and dash timers
-- current wall contact
-- ground pound status
-- grapple phase and rope length
-- active surface modifier
+- `PlatformerControllerState` for core locomotion
+- per-ability public state components for optional packs
+- public messages for state transitions and authored actions
+- fixed-step simulation tests and crate-local E2E scenarios
 
-## Determinism Notes
-
-The runtime is designed to be deterministic enough for repeatable **simulation-step tests**, not for lockstep networking.
-
-Good:
-
-- fixed-step tests with manual `Time` progression
-- replay-like scripted intent feeding
-- AI-driven or E2E-driven movement assertions
-
-Not yet guaranteed:
-
-- bit-for-bit cross-platform determinism
-- rollback/prediction serialization helpers
-- arbitrary gravity or custom collision-backend portability
+This keeps the runtime testable without exposing private timer internals or tying the crate to one specific input stack.

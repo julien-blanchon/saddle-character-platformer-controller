@@ -5,7 +5,8 @@ use bevy::{app::AppExit, camera::ScalingMode, prelude::*, window::WindowResoluti
 use saddle_character_platformer_controller::{
     PlatformVelocityInheritance, PlatformerControllerBundle, PlatformerControllerConfig,
     PlatformerControllerPlugin, PlatformerControllerState, PlatformerControllerSystems,
-    PlatformerMotionPhase, PlatformerOneWayPlatform, PlatformerWallSide,
+    PlatformerDashBundle, PlatformerDashConfig, PlatformerDashIntent, PlatformerDashPlugin,
+    PlatformerDashState, PlatformerMotionPhase, PlatformerOneWayPlatform, PlatformerWallSide,
 };
 use saddle_pane::prelude::*;
 
@@ -217,10 +218,10 @@ impl ExamplePlatformerPane {
             time_to_apex: config.jump.time_to_apex,
             coyote_time: config.jump.coyote_time,
             jump_buffer_time: config.jump.jump_buffer_time,
-            dash_distance: config.dash.distance,
-            dash_duration: config.dash.duration,
-            dash_cooldown: config.dash.cooldown,
-            allow_ground_dash: config.dash.allow_ground_dash,
+            dash_distance: PlatformerDashConfig::default().distance,
+            dash_duration: PlatformerDashConfig::default().duration,
+            dash_cooldown: PlatformerDashConfig::default().cooldown,
+            allow_ground_dash: PlatformerDashConfig::default().allow_ground_dash,
             camera_smoothing: 8.0,
             ..Self::default()
         }
@@ -244,6 +245,7 @@ pub struct DemoDiagnostics {
     pub wall_jump_lock_remaining: f32,
     pub wall_side: Option<PlatformerWallSide>,
     pub controller_state: Option<PlatformerControllerState>,
+    pub dash_state: Option<PlatformerDashState>,
     pub overlay_text: String,
 }
 
@@ -280,6 +282,7 @@ pub fn configure_demo_app(app: &mut App, scene: DemoScene, enhanced_input: bool)
     app.add_plugins((
         PhysicsPlugins::default().with_length_unit(20.0),
         PlatformerControllerPlugin::always_on(FixedUpdate),
+        PlatformerDashPlugin::always_on(FixedUpdate),
     ));
     app.configure_sets(
         FixedUpdate,
@@ -329,20 +332,26 @@ pub fn install_pane(app: &mut App) {
 
 pub fn drive_keyboard_intent(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut intent: Single<
+    mut movement_intents: Query<
         &mut saddle_character_platformer_controller::PlatformerMovementIntent,
         With<DemoPlayer>,
     >,
+    mut dash_intents: Query<&mut PlatformerDashIntent, With<DemoPlayer>>,
 ) {
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
 
-    intent.move_axis = right as i8 as f32 - left as i8 as f32;
-    intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
-    intent.jump_held = keyboard.pressed(KeyCode::Space);
-    intent.dash_pressed = keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
-    intent.ground_pound_pressed = keyboard.just_pressed(KeyCode::KeyQ);
+    if let Ok(mut intent) = movement_intents.single_mut() {
+        intent.move_axis = right as i8 as f32 - left as i8 as f32;
+        intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
+        intent.jump_held = keyboard.pressed(KeyCode::Space);
+        intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+    }
+
+    if let Ok(mut intent) = dash_intents.single_mut() {
+        intent.pressed = keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        intent.direction = Vec2::ZERO;
+    }
 }
 
 fn apply_bootstrapped_pane(
@@ -361,6 +370,7 @@ fn apply_bootstrapped_pane(
 fn sync_platformer_pane(
     pane: Res<ExamplePlatformerPane>,
     mut controllers: Query<&mut PlatformerControllerConfig, With<DemoPlayer>>,
+    mut dash_configs: Query<&mut PlatformerDashConfig, With<DemoPlayer>>,
     mut cameras: Query<&mut DemoCamera>,
 ) {
     for mut config in &mut controllers {
@@ -369,10 +379,13 @@ fn sync_platformer_pane(
         config.jump.time_to_apex = pane.time_to_apex.max(0.01);
         config.jump.coyote_time = pane.coyote_time.max(0.0);
         config.jump.jump_buffer_time = pane.jump_buffer_time.max(0.0);
-        config.dash.distance = pane.dash_distance.max(0.0);
-        config.dash.duration = pane.dash_duration.max(0.01);
-        config.dash.cooldown = pane.dash_cooldown.max(0.0);
-        config.dash.allow_ground_dash = pane.allow_ground_dash;
+    }
+
+    for mut config in &mut dash_configs {
+        config.distance = pane.dash_distance.max(0.0);
+        config.duration = pane.dash_duration.max(0.01);
+        config.cooldown = pane.dash_cooldown.max(0.0);
+        config.allow_ground_dash = pane.allow_ground_dash;
     }
 
     for mut camera in &mut cameras {
@@ -390,7 +403,7 @@ fn update_platformer_pane_monitors(
     pane.velocity_y = diagnostics.player_velocity.y;
     pane.grounded = diagnostics.grounded;
     pane.remaining_air_jumps = diagnostics.remaining_air_jumps as f32;
-    pane.phase = format!("{:?}", diagnostics.phase);
+    pane.phase = display_phase(&diagnostics);
 }
 
 fn setup_scene(
@@ -457,6 +470,7 @@ fn spawn_player(commands: &mut Commands, scene: DemoScene) -> Entity {
                 scene.controller_config(),
             )
             .with_transform(Transform::from_xyz(position.x, position.y, 10.0)),
+            PlatformerDashBundle::default(),
         ))
         .id()
 }
@@ -647,18 +661,24 @@ fn follow_camera(
     camera.1.translation = camera.1.translation.lerp(desired, blend);
 }
 
-fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), With<DemoPlayer>>) {
-    player.1.color = match player.0.phase {
-        PlatformerMotionPhase::Grounded => Color::srgb(0.94, 0.58, 0.22),
-        PlatformerMotionPhase::Dashing => Color::srgb(0.98, 0.28, 0.48),
-        PlatformerMotionPhase::Rising => Color::srgb(0.98, 0.82, 0.30),
-        PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
-        PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),
-        PlatformerMotionPhase::WallSliding => Color::srgb(0.42, 0.76, 0.96),
-        PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
-        PlatformerMotionPhase::GroundPounding => Color::srgb(0.88, 0.18, 0.18),
-        PlatformerMotionPhase::Grappling => Color::srgb(0.60, 0.92, 0.30),
-        PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
+fn tint_player(
+    mut player: Single<
+        (&PlatformerControllerState, Option<&PlatformerDashState>, &mut Sprite),
+        With<DemoPlayer>,
+    >,
+) {
+    player.2.color = if player.1.is_some_and(|dash| dash.active) {
+        Color::srgb(0.98, 0.28, 0.48)
+    } else {
+        match player.0.phase {
+            PlatformerMotionPhase::Grounded => Color::srgb(0.94, 0.58, 0.22),
+            PlatformerMotionPhase::Rising => Color::srgb(0.98, 0.82, 0.30),
+            PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
+            PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),
+            PlatformerMotionPhase::WallSliding => Color::srgb(0.42, 0.76, 0.96),
+            PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
+            PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
+        }
     };
 }
 
@@ -668,9 +688,9 @@ fn update_overlay(
     mut overlay: Single<&mut Text, With<DemoOverlay>>,
 ) {
     overlay.0 = format!(
-        "{}\nphase: {:?}\ngrounded: {}\nvelocity: [{:.1}, {:.1}]\nsupport: {} @ [{:.1}, {:.1}]\ncoyote/buffer/lock: {:.2} / {:.2} / {:.2}\nair jumps left: {}\nbuffered jump: {}\nwall: {:?}",
+        "{}\nphase: {}\ngrounded: {}\nvelocity: [{:.1}, {:.1}]\nsupport: {} @ [{:.1}, {:.1}]\ncoyote/buffer/lock: {:.2} / {:.2} / {:.2}\nair jumps left: {}\ndash charges: {}\nbuffered jump: {}\nwall: {:?}",
         demo.scene.instructions(demo.enhanced_input),
-        diagnostics.phase,
+        display_phase(&diagnostics),
         diagnostics.grounded,
         diagnostics.player_velocity.x,
         diagnostics.player_velocity.y,
@@ -681,6 +701,10 @@ fn update_overlay(
         diagnostics.jump_buffer_remaining,
         diagnostics.wall_jump_lock_remaining,
         diagnostics.remaining_air_jumps,
+        diagnostics
+            .dash_state
+            .as_ref()
+            .map_or(0, |dash| dash.remaining_charges),
         diagnostics.buffered_jump,
         diagnostics.wall_side,
     );
@@ -688,7 +712,10 @@ fn update_overlay(
 }
 
 fn update_diagnostics(
-    player: Single<(&Transform, &PlatformerControllerState), With<DemoPlayer>>,
+    player: Single<
+        (&Transform, &PlatformerControllerState, Option<&PlatformerDashState>),
+        With<DemoPlayer>,
+    >,
     mut diagnostics: ResMut<DemoDiagnostics>,
 ) {
     diagnostics.player_position = player.0.translation.xy();
@@ -704,6 +731,15 @@ fn update_diagnostics(
     diagnostics.wall_jump_lock_remaining = player.1.wall_jump_lock_remaining;
     diagnostics.wall_side = player.1.wall.as_ref().map(|wall| wall.side);
     diagnostics.controller_state = Some(player.1.clone());
+    diagnostics.dash_state = player.2.cloned();
+}
+
+fn display_phase(diagnostics: &DemoDiagnostics) -> String {
+    if diagnostics.dash_state.as_ref().is_some_and(|dash| dash.active) {
+        "Dashing".to_string()
+    } else {
+        format!("{:?}", diagnostics.phase)
+    }
 }
 
 fn auto_exit_if_requested(

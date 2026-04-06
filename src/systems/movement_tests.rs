@@ -9,7 +9,9 @@ use bevy::{app::PostStartup, ecs::message::MessageCursor, prelude::*, time::Time
 use crate::{
     AirJumpConsumed, DashStarted, JumpStarted, PlatformerControllerBundle,
     PlatformerControllerConfig, PlatformerControllerPlugin, PlatformerControllerState,
-    PlatformerJumpKind, PlatformerMovementIntent, PlatformerOneWayPlatform, WallJumpStarted,
+    PlatformerDashBundle, PlatformerDashConfig, PlatformerDashIntent, PlatformerDashPlugin,
+    PlatformerDashState, PlatformerJumpKind, PlatformerMovementIntent, PlatformerOneWayPlatform,
+    WallJumpStarted,
 };
 
 fn test_app() -> App {
@@ -25,7 +27,10 @@ fn test_app() -> App {
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
             1.0 / 60.0,
         )))
-        .add_plugins(PlatformerControllerPlugin::default());
+        .add_plugins((
+            PlatformerControllerPlugin::default(),
+            PlatformerDashPlugin::default(),
+        ));
 
     app.finish();
     app.world_mut().run_schedule(PostStartup);
@@ -84,6 +89,7 @@ fn spawn_player(app: &mut App, center: Vec2, config: PlatformerControllerConfig)
             Name::new("Player"),
             PlatformerControllerBundle::with_config(Collider::rectangle(18.0, 30.0), config)
                 .with_transform(Transform::from_xyz(center.x, center.y, 0.0)),
+            PlatformerDashBundle::default(),
         ))
         .id()
 }
@@ -95,8 +101,6 @@ fn set_intent(
     jump_pressed: bool,
     jump_held: bool,
     drop_pressed: bool,
-    dash_pressed: bool,
-    dash_direction: Vec2,
 ) {
     let mut intent = app
         .world_mut()
@@ -106,8 +110,15 @@ fn set_intent(
     intent.jump_pressed = jump_pressed;
     intent.jump_held = jump_held;
     intent.drop_pressed = drop_pressed;
-    intent.dash_pressed = dash_pressed;
-    intent.dash_direction = dash_direction;
+}
+
+fn set_dash_intent(app: &mut App, entity: Entity, pressed: bool, direction: Vec2) {
+    let mut intent = app
+        .world_mut()
+        .get_mut::<PlatformerDashIntent>(entity)
+        .expect("player should have PlatformerDashIntent");
+    intent.pressed = pressed;
+    intent.direction = direction;
 }
 
 fn set_velocity(app: &mut App, entity: Entity, velocity: Vec2) {
@@ -121,6 +132,13 @@ fn state(app: &App, entity: Entity) -> PlatformerControllerState {
     app.world()
         .get::<PlatformerControllerState>(entity)
         .expect("player should have PlatformerControllerState")
+        .clone()
+}
+
+fn dash_state(app: &App, entity: Entity) -> PlatformerDashState {
+    app.world()
+        .get::<PlatformerDashState>(entity)
+        .expect("player should have PlatformerDashState")
         .clone()
 }
 
@@ -144,16 +162,7 @@ fn walking_off_ledge_then_jumping_within_coyote_window_succeeds() {
 
     let mut walked_off = false;
     for _ in 0..90 {
-        set_intent(
-            &mut app,
-            player,
-            1.0,
-            false,
-            false,
-            false,
-            false,
-            Vec2::ZERO,
-        );
+        set_intent(&mut app, player, 1.0, false, false, false);
         app.update();
         let controller = state(&app, player);
         if !controller.is_grounded && controller.can_use_coyote_jump {
@@ -168,7 +177,7 @@ fn walking_off_ledge_then_jumping_within_coyote_window_succeeds() {
     );
 
     let mut jump_cursor = MessageCursor::<JumpStarted>::default();
-    set_intent(&mut app, player, 1.0, true, true, false, false, Vec2::ZERO);
+    set_intent(&mut app, player, 1.0, true, true, false);
     app.update();
     let jumps: Vec<_> = jump_cursor
         .read(app.world().resource::<Messages<JumpStarted>>())
@@ -198,7 +207,7 @@ fn jump_buffer_just_before_landing_fires_on_touchdown() {
     set_velocity(&mut app, player, Vec2::new(0.0, -320.0));
 
     let mut jump_cursor = MessageCursor::<JumpStarted>::default();
-    set_intent(&mut app, player, 0.0, true, true, false, false, Vec2::ZERO);
+    set_intent(&mut app, player, 0.0, true, true, false);
 
     let mut buffered_jump = None;
     let mut relaunched = false;
@@ -255,16 +264,7 @@ fn wall_slide_requires_valid_wall_contact_and_wall_jump_launches_away() {
 
     let mut wall_sliding = false;
     for _ in 0..90 {
-        set_intent(
-            &mut app,
-            player,
-            -1.0,
-            false,
-            false,
-            false,
-            false,
-            Vec2::ZERO,
-        );
+        set_intent(&mut app, player, -1.0, false, false, false);
         app.update();
         if state(&app, player).phase == crate::PlatformerMotionPhase::WallSliding {
             wall_sliding = true;
@@ -275,7 +275,7 @@ fn wall_slide_requires_valid_wall_contact_and_wall_jump_launches_away() {
     assert!(wall_sliding, "expected a wall slide before jumping away");
 
     let mut wall_jump_cursor = MessageCursor::<WallJumpStarted>::default();
-    set_intent(&mut app, player, -1.0, true, true, false, false, Vec2::ZERO);
+    set_intent(&mut app, player, -1.0, true, true, false);
     app.update();
     let wall_jumps: Vec<_> = wall_jump_cursor
         .read(app.world().resource::<Messages<WallJumpStarted>>())
@@ -320,7 +320,7 @@ fn landing_resets_air_jumps_after_consumption() {
         "player should settle onto the ground before testing jumps"
     );
 
-    set_intent(&mut app, player, 0.0, true, true, false, false, Vec2::ZERO);
+    set_intent(&mut app, player, 0.0, true, true, false);
     let mut airborne = false;
     for _ in 0..40 {
         app.update();
@@ -340,7 +340,7 @@ fn landing_resets_air_jumps_after_consumption() {
     assert_eq!(state(&app, player).remaining_air_jumps, 1);
 
     let mut air_jump_cursor = MessageCursor::<AirJumpConsumed>::default();
-    set_intent(&mut app, player, 0.0, true, true, false, false, Vec2::ZERO);
+    set_intent(&mut app, player, 0.0, true, true, false);
     app.update();
     let air_jumps: Vec<_> = air_jump_cursor
         .read(app.world().resource::<Messages<AirJumpConsumed>>())
@@ -405,7 +405,7 @@ fn moving_platform_velocity_is_inherited_on_jump() {
         "expected support motion to be detected from moving platform"
     );
 
-    set_intent(&mut app, player, 0.0, true, true, false, false, Vec2::ZERO);
+    set_intent(&mut app, player, 0.0, true, true, false);
     step(&mut app, 4);
 
     let controller = state(&app, player);
@@ -427,7 +427,7 @@ fn drop_through_one_way_platform_reaches_the_ground_below() {
         PlatformerControllerConfig::default(),
     );
 
-    set_intent(&mut app, player, 0.0, true, true, false, false, Vec2::ZERO);
+    set_intent(&mut app, player, 0.0, true, true, false);
 
     let mut settled_on_platform = false;
     for _ in 0..180 {
@@ -449,7 +449,7 @@ fn drop_through_one_way_platform_reaches_the_ground_below() {
         "player should settle on the one-way platform before dropping through"
     );
 
-    set_intent(&mut app, player, 0.0, false, false, true, false, Vec2::ZERO);
+    set_intent(&mut app, player, 0.0, false, false, true);
 
     let mut reached_ground = false;
     for _ in 0..120 {
@@ -477,23 +477,21 @@ fn dash_starts_in_air_and_refills_after_landing() {
     let mut app = test_app();
     let mut config = PlatformerControllerConfig::default();
     config.jump.max_air_jumps = 0;
-    config.dash.max_charges = 1;
-    config.dash.allow_ground_dash = false;
 
     spawn_ground(&mut app, Vec2::new(0.0, -150.0), Vec2::new(420.0, 24.0));
     let player = spawn_player(&mut app, Vec2::new(-20.0, -80.0), config);
+    {
+        let mut dash_config = app
+            .world_mut()
+            .get_mut::<PlatformerDashConfig>(player)
+            .expect("player should have PlatformerDashConfig");
+        dash_config.max_charges = 1;
+        dash_config.allow_ground_dash = false;
+    }
 
     let mut dash_cursor = MessageCursor::<DashStarted>::default();
-    set_intent(
-        &mut app,
-        player,
-        1.0,
-        false,
-        false,
-        false,
-        true,
-        Vec2::new(1.0, 0.0),
-    );
+    set_intent(&mut app, player, 1.0, false, false, false);
+    set_dash_intent(&mut app, player, true, Vec2::new(1.0, 0.0));
     app.update();
 
     let dashes: Vec<_> = dash_cursor
@@ -503,20 +501,22 @@ fn dash_starts_in_air_and_refills_after_landing() {
     assert_eq!(dashes.len(), 1, "expected a dash start message");
 
     let controller = state(&app, player);
-    assert_eq!(controller.phase, crate::PlatformerMotionPhase::Dashing);
+    let dash = dash_state(&app, player);
+    assert!(dash.active, "dash should enter the active dash state");
     assert!(
         controller.velocity.x > 300.0,
         "dash should apply a strong horizontal burst"
     );
-    assert_eq!(controller.remaining_dashes, 0);
+    assert_eq!(dash.remaining_charges, 0);
 
     let mut landed = false;
     for _ in 0..180 {
         app.update();
         let controller = state(&app, player);
+        let dash = dash_state(&app, player);
         if controller.is_grounded {
             landed = true;
-            assert_eq!(controller.remaining_dashes, 1);
+            assert_eq!(dash.remaining_charges, 1);
             break;
         }
     }
@@ -542,7 +542,7 @@ fn corner_correction_clears_a_ledgelip_that_would_otherwise_stop_the_jump() {
     let player = spawn_player(&mut app, Vec2::new(-16.0, -57.0), config);
 
     step(&mut app, 10);
-    set_intent(&mut app, player, 0.0, true, true, false, false, Vec2::ZERO);
+    set_intent(&mut app, player, 0.0, true, true, false);
 
     let mut reached_above_lip = false;
     for _ in 0..40 {

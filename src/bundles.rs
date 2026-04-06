@@ -2,8 +2,8 @@ use avian2d::prelude::*;
 use bevy::prelude::*;
 
 use crate::{
-    PlatformerController, PlatformerControllerConfig, PlatformerControllerState,
-    PlatformerMovementIntent,
+    PlatformerController, PlatformerControllerConfig, PlatformerControllerDirectives,
+    PlatformerControllerState, PlatformerMovementIntent,
     components::{PlatformerControllerRuntimeState, runtime_from_config},
 };
 
@@ -12,6 +12,7 @@ pub struct PlatformerControllerBundle {
     controller: PlatformerController,
     config: PlatformerControllerConfig,
     intent: PlatformerMovementIntent,
+    directives: PlatformerControllerDirectives,
     state: PlatformerControllerState,
     runtime: PlatformerControllerRuntimeState,
     body: RigidBody,
@@ -42,6 +43,7 @@ impl PlatformerControllerBundle {
             controller: PlatformerController,
             config,
             intent: PlatformerMovementIntent::default(),
+            directives: PlatformerControllerDirectives::default(),
             state: PlatformerControllerState::default(),
             runtime,
             body: RigidBody::Kinematic,

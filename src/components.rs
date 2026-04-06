@@ -13,20 +13,6 @@ pub struct PlatformerMovementIntent {
     pub jump_pressed: bool,
     pub jump_held: bool,
     pub drop_pressed: bool,
-    pub dash_pressed: bool,
-    pub dash_direction: Vec2,
-    /// Trigger a ground pound (mid-air downward slam).
-    pub ground_pound_pressed: bool,
-    /// Fire the grapple hook toward `grapple_direction`.
-    pub grapple_pressed: bool,
-    /// Release / detach the grapple hook.
-    pub grapple_released: bool,
-    /// Aim direction for the grapple (normalized; ZERO = auto-aim).
-    pub grapple_direction: Vec2,
-    /// Retract the grapple rope (shorten).
-    pub grapple_retract: bool,
-    /// Extend the grapple rope (lengthen).
-    pub grapple_extend: bool,
 }
 
 impl Default for PlatformerMovementIntent {
@@ -36,16 +22,18 @@ impl Default for PlatformerMovementIntent {
             jump_pressed: false,
             jump_held: false,
             drop_pressed: false,
-            dash_pressed: false,
-            dash_direction: Vec2::ZERO,
-            ground_pound_pressed: false,
-            grapple_pressed: false,
-            grapple_released: false,
-            grapple_direction: Vec2::ZERO,
-            grapple_retract: false,
-            grapple_extend: false,
         }
     }
+}
+
+/// Public hook that lets optional ability plugins or downstream code suppress
+/// parts of the core locomotion pipeline for a single frame.
+#[derive(Component, Reflect, Clone, Debug, Default, PartialEq, Eq)]
+#[reflect(Component, Default, Debug, PartialEq)]
+pub struct PlatformerControllerDirectives {
+    pub suppress_horizontal_movement: bool,
+    pub suppress_jump_logic: bool,
+    pub suppress_wall_interactions: bool,
 }
 
 #[derive(Component, Reflect, Clone, Debug, Default)]
@@ -77,11 +65,6 @@ impl Default for PlatformerSurfaceModifier {
     }
 }
 
-/// Marker for entities that can be targeted by the grapple hook.
-#[derive(Component, Reflect, Clone, Debug, Default)]
-#[reflect(Component, Default, Debug)]
-pub struct PlatformerGrapplePoint;
-
 #[derive(Clone, Copy, Debug, Reflect, PartialEq, Eq, Default)]
 #[reflect(Debug, PartialEq, Default)]
 pub enum PlatformVelocityInheritance {
@@ -103,26 +86,13 @@ pub enum PlatformerWallSide {
 #[reflect(Debug, PartialEq, Default)]
 pub enum PlatformerMotionPhase {
     Grounded,
-    Dashing,
     Rising,
     Apex,
     Falling,
     WallSliding,
     WallClinging,
-    GroundPounding,
-    Grappling,
     #[default]
     Airborne,
-}
-
-/// Current grapple hook state.
-#[derive(Clone, Copy, Debug, Reflect, PartialEq, Default)]
-#[reflect(Debug, PartialEq, Default)]
-pub enum PlatformerGrapplePhase {
-    #[default]
-    Idle,
-    /// Pulling toward the attached point.
-    Pulling { target: Vec2, rope_length: f32 },
 }
 
 #[derive(Clone, Debug, Reflect, PartialEq)]
@@ -165,15 +135,10 @@ pub struct PlatformerControllerState {
     pub can_use_coyote_jump: bool,
     pub buffered_jump: bool,
     pub remaining_air_jumps: u32,
-    pub remaining_dashes: u32,
     pub coyote_time_remaining: f32,
     pub jump_buffer_remaining: f32,
     pub wall_jump_lock_remaining: f32,
-    pub dash_time_remaining: f32,
-    pub dash_cooldown_remaining: f32,
-    pub ground_pound_active: bool,
     pub wall_cling_remaining: f32,
-    pub grapple_phase: PlatformerGrapplePhase,
     /// The active surface modifier from the ground entity (if any).
     pub surface_modifier: Option<PlatformerSurfaceModifier>,
 }
@@ -191,15 +156,10 @@ impl Default for PlatformerControllerState {
             can_use_coyote_jump: false,
             buffered_jump: false,
             remaining_air_jumps: 0,
-            remaining_dashes: 0,
             coyote_time_remaining: 0.0,
             jump_buffer_remaining: 0.0,
             wall_jump_lock_remaining: 0.0,
-            dash_time_remaining: 0.0,
-            dash_cooldown_remaining: 0.0,
-            ground_pound_active: false,
             wall_cling_remaining: 0.0,
-            grapple_phase: PlatformerGrapplePhase::Idle,
             surface_modifier: None,
         }
     }
@@ -218,13 +178,6 @@ pub(crate) struct PendingWallJumpMessage {
     pub velocity: Vec2,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct PendingDashMessage {
-    pub direction: Vec2,
-    pub velocity: Vec2,
-    pub remaining_charges: u32,
-}
-
 #[derive(Component, Clone, Debug)]
 pub(crate) struct PlatformerControllerRuntimeState {
     pub initialized: bool,
@@ -234,12 +187,8 @@ pub(crate) struct PlatformerControllerRuntimeState {
     pub wall_jump_lock_remaining: f32,
     pub drop_through_remaining: f32,
     pub remaining_air_jumps: u32,
-    pub remaining_dashes: u32,
     pub support_velocity: Vec2,
     pub support_position: Option<Vec2>,
-    pub dash_time_remaining: f32,
-    pub dash_cooldown_remaining: f32,
-    pub dash_direction: Vec2,
     pub facing_sign: f32,
     pub last_support_entity: Option<Entity>,
     pub last_support_position: Option<Vec2>,
@@ -251,27 +200,14 @@ pub(crate) struct PlatformerControllerRuntimeState {
     pub right_wall: Option<PlatformerContact>,
     pub pending_jump: Option<PendingJumpMessage>,
     pub pending_wall_jump: Option<PendingWallJumpMessage>,
-    pub pending_dash: Option<PendingDashMessage>,
     pub pending_landed_impact_speed: Option<f32>,
     pub pending_landed_support: Option<Entity>,
     pub pending_air_jump_consumed: Option<u32>,
-    // --- Ground pound ---
-    pub ground_pound_active: bool,
-    pub ground_pound_hover_remaining: f32,
-    pub ground_pound_impact_stun: f32,
-    pub pending_ground_pound_started: bool,
-    pub pending_ground_pound_impact_speed: Option<f32>,
-    // --- Wall cling ---
     pub wall_cling_remaining: f32,
     pub was_wall_clinging: bool,
     pub pending_wall_cling_started: Option<PlatformerWallSide>,
-    // --- Grapple ---
-    pub grapple_phase: PlatformerGrapplePhase,
-    pub grapple_target_entity: Option<Entity>,
-    pub pending_grapple_started: Option<Vec2>,
-    pub pending_grapple_detached: bool,
-    // --- Surface modifier (cached from ground contact) ---
     pub surface_modifier: Option<PlatformerSurfaceModifier>,
+    pub directives: PlatformerControllerDirectives,
 }
 
 impl Default for PlatformerControllerRuntimeState {
@@ -284,12 +220,8 @@ impl Default for PlatformerControllerRuntimeState {
             wall_jump_lock_remaining: 0.0,
             drop_through_remaining: 0.0,
             remaining_air_jumps: 0,
-            remaining_dashes: 0,
             support_velocity: Vec2::ZERO,
             support_position: None,
-            dash_time_remaining: 0.0,
-            dash_cooldown_remaining: 0.0,
-            dash_direction: Vec2::X,
             facing_sign: 1.0,
             last_support_entity: None,
             last_support_position: None,
@@ -301,23 +233,14 @@ impl Default for PlatformerControllerRuntimeState {
             right_wall: None,
             pending_jump: None,
             pending_wall_jump: None,
-            pending_dash: None,
             pending_landed_impact_speed: None,
             pending_landed_support: None,
             pending_air_jump_consumed: None,
-            ground_pound_active: false,
-            ground_pound_hover_remaining: 0.0,
-            ground_pound_impact_stun: 0.0,
-            pending_ground_pound_started: false,
-            pending_ground_pound_impact_speed: None,
             wall_cling_remaining: 0.0,
             was_wall_clinging: false,
             pending_wall_cling_started: None,
-            grapple_phase: PlatformerGrapplePhase::Idle,
-            grapple_target_entity: None,
-            pending_grapple_started: None,
-            pending_grapple_detached: false,
             surface_modifier: None,
+            directives: PlatformerControllerDirectives::default(),
         }
     }
 }
@@ -327,7 +250,6 @@ pub(crate) fn runtime_from_config(
 ) -> PlatformerControllerRuntimeState {
     PlatformerControllerRuntimeState {
         remaining_air_jumps: config.jump.max_air_jumps,
-        remaining_dashes: config.dash.max_charges,
         ..default()
     }
 }

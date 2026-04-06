@@ -3,7 +3,9 @@ use bevy::prelude::*;
 
 use saddle_character_platformer_controller::{
     PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerState,
-    PlatformerMotionPhase, PlatformerMovementIntent,
+    PlatformerDashBundle, PlatformerDashState, PlatformerGroundPoundBundle,
+    PlatformerGroundPoundConfig, PlatformerGroundPoundState, PlatformerMotionPhase,
+    PlatformerMovementIntent,
 };
 
 use crate::support::DemoDiagnostics;
@@ -29,6 +31,17 @@ pub fn overlay_text(world: &World) -> Option<String> {
         .and_then(|diagnostics| {
             (!diagnostics.overlay_text.is_empty()).then_some(diagnostics.overlay_text.clone())
         })
+}
+
+pub fn player_dash_state(world: &World) -> Option<PlatformerDashState> {
+    world
+        .get_resource::<DemoDiagnostics>()
+        .and_then(|diagnostics| diagnostics.dash_state.clone())
+}
+
+pub fn player_ground_pound_state(world: &World) -> Option<PlatformerGroundPoundState> {
+    let entity = player_entity(world)?;
+    world.get::<PlatformerGroundPoundState>(entity).cloned()
 }
 
 pub fn teleport_player(world: &mut World, translation: Vec2, velocity: Vec2) {
@@ -60,6 +73,7 @@ pub fn teleport_player_with_config(
                 config.clone(),
             )
             .with_transform(Transform::from_xyz(translation.x, translation.y, 10.0)),
+            PlatformerDashBundle::default(),
         ))
         .id();
     world
@@ -81,6 +95,7 @@ pub fn teleport_player_with_config(
         diagnostics.buffered_jump = false;
         diagnostics.wall_side = None;
         diagnostics.controller_state = None;
+        diagnostics.dash_state = None;
         diagnostics.overlay_text.clear();
     }
     if let Some(mut scripted) = world.get_resource_mut::<ScriptedControl>() {
@@ -89,6 +104,26 @@ pub fn teleport_player_with_config(
     if let Some(mut log) = world.get_resource_mut::<LabMessageLog>() {
         *log = LabMessageLog::default();
     }
+}
+
+pub fn teleport_player_with_ground_pound(
+    world: &mut World,
+    translation: Vec2,
+    velocity: Vec2,
+    config: PlatformerControllerConfig,
+    ground_pound: PlatformerGroundPoundConfig,
+) {
+    teleport_player_with_config(world, translation, velocity, config);
+
+    let Some(entity) = player_entity(world) else {
+        return;
+    };
+    world
+        .entity_mut(entity)
+        .insert(PlatformerGroundPoundBundle::default());
+    *world
+        .get_mut::<PlatformerGroundPoundConfig>(entity)
+        .expect("ground pound bundle should add config") = ground_pound;
 }
 
 pub fn set_scripted_control(

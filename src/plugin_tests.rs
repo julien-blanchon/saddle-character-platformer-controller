@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use avian2d::prelude::{Collider, PhysicsPlugins, Position, RigidBody, Rotation};
 use bevy::{
@@ -9,10 +9,13 @@ use bevy::{
 };
 
 use crate::{
-    AirJumpConsumed, DashStarted, JumpStarted, Landed, PlatformerControllerBundle,
+    AirJumpConsumed, JumpStarted, Landed, PlatformerAbilityActivationResolution,
+    PlatformerAbilityActivity, PlatformerAbilityComposition, PlatformerAbilityCompositionPolicy,
+    PlatformerAbilityConflictAction, PlatformerAbilityKind, PlatformerControllerBundle,
     PlatformerControllerPlugin, PlatformerControllerState, PlatformerControllerSystems,
+    PlatformerDashPlugin, PlatformerGrapplePlugin, PlatformerGroundPoundPlugin,
     PlatformerJumpConfig, PlatformerJumpKind, PlatformerMovementIntent,
-    components::{PendingDashMessage, PendingJumpMessage, PlatformerControllerRuntimeState},
+    components::{PendingJumpMessage, PlatformerControllerRuntimeState},
     systems::{activation::PlatformerControllerRuntime, state_sync},
 };
 
@@ -30,6 +33,33 @@ struct AfterControllerState;
 
 #[derive(Resource, Default, Debug, PartialEq, Eq)]
 struct OrderLog(Vec<&'static str>);
+
+#[derive(Debug)]
+struct DashCancelsGroundPoundPolicy;
+
+impl PlatformerAbilityCompositionPolicy for DashCancelsGroundPoundPolicy {
+    fn resolve_activation(
+        &self,
+        requested: PlatformerAbilityKind,
+        _active: PlatformerAbilityActivity,
+    ) -> PlatformerAbilityActivationResolution {
+        match requested {
+            PlatformerAbilityKind::Dash => PlatformerAbilityActivationResolution {
+                allow_requested: true,
+                dash: PlatformerAbilityConflictAction::Keep,
+                ground_pound: PlatformerAbilityConflictAction::Cancel,
+                grapple: PlatformerAbilityConflictAction::Keep,
+            },
+            PlatformerAbilityKind::GroundPound | PlatformerAbilityKind::Grapple => {
+                PlatformerAbilityActivationResolution::allow()
+            }
+        }
+    }
+
+    fn detach_grapple_on_jump(&self, _active: PlatformerAbilityActivity) -> bool {
+        false
+    }
+}
 
 fn push_controller_marker(mut log: ResMut<OrderLog>) {
     log.0.push("controller");
@@ -124,13 +154,8 @@ fn emit_messages_flushes_pending_runtime_events() {
         .add_message::<JumpStarted>()
         .add_message::<Landed>()
         .add_message::<crate::WallJumpStarted>()
-        .add_message::<DashStarted>()
         .add_message::<AirJumpConsumed>()
-        .add_message::<crate::GroundPoundStarted>()
-        .add_message::<crate::GroundPoundImpact>()
         .add_message::<crate::WallClingStarted>()
-        .add_message::<crate::GrappleAttached>()
-        .add_message::<crate::GrappleDetached>()
         .add_systems(Update, state_sync::emit_messages);
 
     let entity = app
@@ -149,11 +174,6 @@ fn emit_messages_flushes_pending_runtime_events() {
             velocity: Vec2::new(12.0, 34.0),
             used_buffer: true,
         });
-        runtime.pending_dash = Some(PendingDashMessage {
-            direction: Vec2::X,
-            velocity: Vec2::new(120.0, 0.0),
-            remaining_charges: 0,
-        });
         runtime.pending_landed_impact_speed = Some(18.0);
         runtime.pending_landed_support = Some(Entity::from_bits(9));
         runtime.pending_air_jump_consumed = Some(0);
@@ -170,16 +190,6 @@ fn emit_messages_flushes_pending_runtime_events() {
     assert_eq!(jumps[0].entity, entity);
     assert_eq!(jumps[0].kind, PlatformerJumpKind::Air);
     assert!(jumps[0].used_buffer);
-
-    let mut dash_cursor = MessageCursor::<DashStarted>::default();
-    let dashes: Vec<_> = dash_cursor
-        .read(app.world().resource::<Messages<DashStarted>>())
-        .cloned()
-        .collect();
-    assert_eq!(dashes.len(), 1);
-    assert_eq!(dashes[0].entity, entity);
-    assert_eq!(dashes[0].direction, Vec2::X);
-    assert_eq!(dashes[0].remaining_charges, 0);
 
     let mut landed_cursor = MessageCursor::<Landed>::default();
     let landings: Vec<_> = landed_cursor
@@ -240,5 +250,79 @@ fn plugin_initializes_in_a_simple_physics_scene() {
         app.world()
             .entity(entity)
             .contains::<PlatformerControllerState>()
+    );
+}
+
+#[test]
+fn default_ability_policy_blocks_conflicting_activations() {
+    let composition = PlatformerAbilityComposition::default();
+
+    let dash_during_ground_pound = composition.0.resolve_activation(
+        PlatformerAbilityKind::Dash,
+        PlatformerAbilityActivity {
+            ground_pound: true,
+            ..default()
+        },
+    );
+    assert!(!dash_during_ground_pound.allow_requested);
+
+    let grapple_during_ground_pound = composition.0.resolve_activation(
+        PlatformerAbilityKind::Grapple,
+        PlatformerAbilityActivity {
+            ground_pound: true,
+            ..default()
+        },
+    );
+    assert!(grapple_during_ground_pound.allow_requested);
+    assert_eq!(
+        grapple_during_ground_pound.ground_pound,
+        PlatformerAbilityConflictAction::Cancel
+    );
+    assert!(
+        composition
+            .0
+            .detach_grapple_on_jump(PlatformerAbilityActivity {
+                grapple: true,
+                ..default()
+            })
+    );
+}
+
+#[test]
+fn injected_ability_policy_is_preserved_when_ability_plugins_build() {
+    let mut app = App::new();
+    app.insert_resource(PlatformerAbilityComposition(Arc::new(
+        DashCancelsGroundPoundPolicy,
+    )));
+    app.add_plugins(MinimalPlugins)
+        .add_plugins(PlatformerControllerPlugin::default())
+        .add_plugins(PlatformerDashPlugin::default())
+        .add_plugins(PlatformerGroundPoundPlugin::default())
+        .add_plugins(PlatformerGrapplePlugin::default());
+
+    let composition = app
+        .world()
+        .resource::<PlatformerAbilityComposition>()
+        .clone();
+    let resolution = composition.0.resolve_activation(
+        PlatformerAbilityKind::Dash,
+        PlatformerAbilityActivity {
+            ground_pound: true,
+            ..default()
+        },
+    );
+
+    assert!(resolution.allow_requested);
+    assert_eq!(
+        resolution.ground_pound,
+        PlatformerAbilityConflictAction::Cancel
+    );
+    assert!(
+        !composition
+            .0
+            .detach_grapple_on_jump(PlatformerAbilityActivity {
+                grapple: true,
+                ..default()
+            })
     );
 }

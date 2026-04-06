@@ -75,9 +75,6 @@ pub(crate) fn sense_pre_movement_contacts(
         if runtime.pre_ground.is_some() {
             runtime.coyote_time_remaining = config.jump.coyote_time;
             runtime.remaining_air_jumps = config.jump.max_air_jumps;
-            if config.dash.refill_on_ground {
-                runtime.remaining_dashes = config.dash.max_charges;
-            }
         }
     }
 }

@@ -15,7 +15,8 @@ use saddle_camera_pixel_camera::{
     PixelCamera, PixelCameraInner, PixelCameraPlugin, PixelCameraTransform, PixelSnap,
 };
 use saddle_character_platformer_controller::{
-    DashStarted, PlatformerControllerBundle, PlatformerControllerConfig,
+    DashStarted, PlatformerControllerBundle, PlatformerControllerConfig, PlatformerDashBundle,
+    PlatformerDashConfig, PlatformerDashPlugin, PlatformerDashState,
     PlatformerControllerPlugin, PlatformerControllerState, PlatformerControllerSystems,
     PlatformerMotionPhase,
 };
@@ -164,6 +165,7 @@ fn main() -> AppExit {
     app.add_plugins((
         PhysicsPlugins::default().with_length_unit(20.0),
         PlatformerControllerPlugin::always_on(FixedUpdate),
+        PlatformerDashPlugin::always_on(FixedUpdate),
         SpritesheetPlugin::default(),
         SpriteEffectsPlugin::default(),
         ParallaxScrollerPlugin::default(),
@@ -299,9 +301,12 @@ fn spawn_player(commands: &mut Commands, atlas: DemoAtlas, library: Handle<Anima
     let mut config = platformer_support::DemoScene::Basic.controller_config();
     config.jump.height = 92.0;
     config.jump.time_to_apex = 0.38;
-    config.dash.distance = 92.0;
-    config.dash.duration = 0.16;
-    config.dash.cooldown = 0.12;
+    let dash_config = PlatformerDashConfig {
+        distance: 92.0,
+        duration: 0.16,
+        cooldown: 0.12,
+        ..default()
+    };
 
     commands.spawn((
         Name::new("Demo Player"),
@@ -322,6 +327,7 @@ fn spawn_player(commands: &mut Commands, atlas: DemoAtlas, library: Handle<Anima
             config,
         )
         .with_transform(Transform::from_xyz(-220.0, -44.0, 1.0)),
+        PlatformerDashBundle::with_config(dash_config),
         SpritesheetAnimationBundle::new(library, AnimationTarget::state("idle")),
         OutlineEffect::new(OutlineConfig {
             color: Color::srgba(0.04, 0.05, 0.06, 1.0),
@@ -397,6 +403,7 @@ fn tag_new_parallax_layers(mut commands: Commands, layers: Query<Entity, Added<P
 fn sync_demo_pane(
     mut pane: ResMut<FullDemoPane>,
     mut controllers: Query<&mut PlatformerControllerConfig, With<platformer_support::DemoPlayer>>,
+    mut dash_configs: Query<&mut PlatformerDashConfig, With<platformer_support::DemoPlayer>>,
     mut pixel_camera: Query<&mut PixelCamera, With<CameraRoot>>,
     mut animators: Query<&mut SpritesheetAnimator, With<DemoPlayerSprite>>,
     mut outlines: Query<&mut OutlineEffect, With<DemoPlayerSprite>>,
@@ -410,8 +417,11 @@ fn sync_demo_pane(
     for mut config in &mut controllers {
         config.jump.height = pane.jump_height.max(0.0);
         config.jump.time_to_apex = pane.time_to_apex.max(0.01);
-        config.dash.distance = pane.dash_distance.max(0.0);
-        config.dash.duration = pane.dash_duration.max(0.01);
+    }
+
+    for mut config in &mut dash_configs {
+        config.distance = pane.dash_distance.max(0.0);
+        config.duration = pane.dash_duration.max(0.01);
     }
 
     for mut camera in &mut pixel_camera {
@@ -471,6 +481,7 @@ fn drive_player_animation(
     mut player: Query<
         (
             &PlatformerControllerState,
+            &PlatformerDashState,
             &LinearVelocity,
             &mut AnimationController,
             &mut Transform,
@@ -478,16 +489,19 @@ fn drive_player_animation(
         With<DemoPlayerSprite>,
     >,
 ) {
-    let Ok((state, velocity, mut controller, mut transform)) = player.single_mut() else {
+    let Ok((state, dash, velocity, mut controller, mut transform)) = player.single_mut() else {
         return;
     };
 
-    let target = match state.phase {
-        PlatformerMotionPhase::Dashing => "dash",
+    let target = if dash.active {
+        "dash"
+    } else {
+        match state.phase {
         PlatformerMotionPhase::Rising | PlatformerMotionPhase::Apex => "rise",
         PlatformerMotionPhase::Falling | PlatformerMotionPhase::Airborne => "fall",
         _ if velocity.x.abs() > 24.0 => "run",
         _ => "idle",
+        }
     };
     controller.set_target(AnimationTarget::state(target));
 
@@ -514,10 +528,13 @@ fn pulse_player_on_dash(
 }
 
 fn update_overlay(
-    player: Query<(&PlatformerControllerState, &SpritesheetAnimator), With<DemoPlayerSprite>>,
+    player: Query<
+        (&PlatformerControllerState, &PlatformerDashState, &SpritesheetAnimator),
+        With<DemoPlayerSprite>,
+    >,
     mut overlay: Query<&mut Text, With<OverlayText>>,
 ) {
-    let Ok((state, animator)) = player.single() else {
+    let Ok((state, dash, animator)) = player.single() else {
         return;
     };
     let Ok(mut overlay) = overlay.single_mut() else {
@@ -532,7 +549,7 @@ fn update_overlay(
             .as_ref()
             .map_or("none", |clip| clip.as_str()),
         animator.current_frame,
-        state.remaining_dashes,
+        dash.remaining_charges,
     ));
 }
 

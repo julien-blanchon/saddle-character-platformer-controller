@@ -8,8 +8,9 @@ use bevy::prelude::*;
 use saddle_character_platformer_controller::{
     AirJumpConsumed, DashStarted, GroundPoundImpact, GroundPoundStarted, JumpStarted, Landed,
     PlatformerControllerDebugPlugin, PlatformerControllerDebugSettings,
-    PlatformerControllerSystems, PlatformerJumpKind, PlatformerMovementIntent, PlatformerWallSide,
-    WallJumpStarted,
+    PlatformerControllerSystems, PlatformerDashIntent, PlatformerGroundPoundIntent,
+    PlatformerGroundPoundPlugin, PlatformerJumpKind, PlatformerMovementIntent,
+    PlatformerWallSide, WallJumpStarted,
 };
 use support::{DemoFixedSystems, DemoPlayer, DemoScene};
 
@@ -73,6 +74,7 @@ fn main() {
         ..default()
     });
     app.add_plugins(PlatformerControllerDebugPlugin);
+    app.add_plugins(PlatformerGroundPoundPlugin::always_on(FixedUpdate));
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
     app.add_plugins(bevy_brp_extras::BrpExtrasPlugin::with_port(LAB_BRP_PORT));
     #[cfg(feature = "e2e")]
@@ -144,32 +146,40 @@ fn parse_scene_name(value: &str) -> Option<DemoScene> {
 
 fn apply_scripted_control(
     mut scripted: ResMut<ScriptedControl>,
-    mut intent: Single<&mut PlatformerMovementIntent, With<DemoPlayer>>,
+    mut movement_intents: Query<&mut PlatformerMovementIntent, With<DemoPlayer>>,
+    mut dash_intents: Query<&mut PlatformerDashIntent, With<DemoPlayer>>,
+    mut ground_pound_intents: Query<&mut PlatformerGroundPoundIntent, With<DemoPlayer>>,
 ) {
     if !scripted.active {
         return;
     }
 
-    intent.move_axis = scripted.move_axis;
-    intent.jump_held = scripted.jump_held;
+    if let Ok(mut intent) = movement_intents.single_mut() {
+        intent.move_axis = scripted.move_axis;
+        intent.jump_held = scripted.jump_held;
 
-    if scripted.jump_pressed {
-        intent.jump_pressed = true;
-        scripted.jump_pressed = false;
+        if scripted.jump_pressed {
+            intent.jump_pressed = true;
+            scripted.jump_pressed = false;
+        }
+
+        if scripted.drop_pressed {
+            intent.drop_pressed = true;
+            scripted.drop_pressed = false;
+        }
     }
 
     if scripted.dash_pressed {
-        intent.dash_pressed = true;
+        if let Ok(mut intent) = dash_intents.single_mut() {
+            intent.pressed = true;
+        }
         scripted.dash_pressed = false;
     }
 
-    if scripted.drop_pressed {
-        intent.drop_pressed = true;
-        scripted.drop_pressed = false;
-    }
-
     if scripted.ground_pound_pressed {
-        intent.ground_pound_pressed = true;
+        if let Ok(mut intent) = ground_pound_intents.single_mut() {
+            intent.pressed = true;
+        }
         scripted.ground_pound_pressed = false;
     }
 }

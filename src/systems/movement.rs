@@ -6,11 +6,9 @@ use bevy::{ecs::query::Has, prelude::*};
 
 use crate::{
     PlatformVelocityInheritance, PlatformerController, PlatformerControllerConfig,
-    PlatformerJumpKind, PlatformerMovementIntent, PlatformerOneWayPlatform, PlatformerWallSide,
-    components::{
-        PendingDashMessage, PendingJumpMessage, PendingWallJumpMessage,
-        PlatformerControllerRuntimeState, PlatformerGrapplePhase,
-    },
+    PlatformerControllerDirectives, PlatformerJumpKind, PlatformerMovementIntent,
+    PlatformerOneWayPlatform, PlatformerWallSide,
+    components::{PendingJumpMessage, PendingWallJumpMessage, PlatformerControllerRuntimeState},
     helpers::{
         approach_scalar, inherited_platform_velocity, move_and_slide_config, sign_or_fallback,
         wall_contact_from_hits, wall_input_matches,
@@ -32,6 +30,7 @@ pub(crate) fn apply_horizontal_movement(
         (
             &PlatformerControllerConfig,
             &PlatformerMovementIntent,
+            &PlatformerControllerDirectives,
             &mut LinearVelocity,
             &PlatformerControllerRuntimeState,
         ),
@@ -40,14 +39,8 @@ pub(crate) fn apply_horizontal_movement(
 ) {
     let delta_secs = time.delta_secs();
 
-    for (config, intent, mut velocity, runtime) in &mut controllers {
-        // Skip during dash, ground pound, impact stun, or grapple
-        if runtime.dash_time_remaining > 0.0
-            || runtime.ground_pound_active
-            || runtime.ground_pound_hover_remaining > 0.0
-            || runtime.ground_pound_impact_stun > 0.0
-            || !matches!(runtime.grapple_phase, PlatformerGrapplePhase::Idle)
-        {
+    for (config, intent, directives, mut velocity, runtime) in &mut controllers {
+        if directives.suppress_horizontal_movement {
             continue;
         }
 
@@ -70,7 +63,6 @@ pub(crate) fn apply_horizontal_movement(
 
         let accelerating = move_axis.abs() > 0.01;
 
-        // Surface modifier: friction and speed multipliers
         let (friction_mult, speed_mult, surface_vel) =
             if let Some(modifier) = runtime.surface_modifier.as_ref() {
                 (
@@ -104,64 +96,11 @@ pub(crate) fn apply_horizontal_movement(
         local_velocity.x =
             approach_scalar(local_velocity.x, target_speed, acceleration * delta_secs);
 
-        // Apply surface velocity (conveyor belt)
         velocity.x = local_velocity.x + inherited_velocity.x + surface_vel.x;
 
         if grounded && velocity.y <= inherited_velocity.y {
             velocity.y = inherited_velocity.y + surface_vel.y;
         }
-    }
-}
-
-pub(crate) fn apply_dash(
-    mut controllers: Query<
-        (
-            &PlatformerControllerConfig,
-            &PlatformerMovementIntent,
-            &mut LinearVelocity,
-            &mut PlatformerControllerRuntimeState,
-        ),
-        With<PlatformerController>,
-    >,
-) {
-    for (config, intent, mut velocity, mut runtime) in &mut controllers {
-        if runtime.dash_time_remaining > 0.0 {
-            velocity.0 = dash_velocity(config, runtime.dash_direction, velocity.0);
-            continue;
-        }
-
-        if !intent.dash_pressed
-            || config.dash.max_charges == 0
-            || runtime.dash_cooldown_remaining > 0.0
-            || runtime.remaining_dashes == 0
-            || runtime.ground_pound_active
-            || runtime.ground_pound_hover_remaining > 0.0
-            || runtime.ground_pound_impact_stun > 0.0
-        {
-            continue;
-        }
-
-        let grounded = runtime.pre_ground.is_some();
-        if grounded && !config.dash.allow_ground_dash {
-            continue;
-        }
-
-        let dash_direction = resolve_dash_direction(intent, &runtime, velocity.0, config);
-        velocity.0 = dash_velocity(config, dash_direction, velocity.0);
-        runtime.dash_direction = dash_direction;
-        runtime.dash_time_remaining = config.dash.duration.max(0.0);
-        runtime.dash_cooldown_remaining = config.dash.cooldown.max(0.0);
-        runtime.jump_buffer_remaining = 0.0;
-        runtime.coyote_time_remaining = 0.0;
-        runtime.remaining_dashes = runtime.remaining_dashes.saturating_sub(1);
-        // Cancel ground pound on dash
-        runtime.ground_pound_active = false;
-        runtime.ground_pound_hover_remaining = 0.0;
-        runtime.pending_dash = Some(PendingDashMessage {
-            direction: dash_direction,
-            velocity: velocity.0,
-            remaining_charges: runtime.remaining_dashes,
-        });
     }
 }
 
@@ -171,6 +110,7 @@ pub(crate) fn apply_jump_logic(
         (
             &PlatformerControllerConfig,
             &PlatformerMovementIntent,
+            &PlatformerControllerDirectives,
             &mut LinearVelocity,
             &mut PlatformerControllerRuntimeState,
         ),
@@ -179,14 +119,8 @@ pub(crate) fn apply_jump_logic(
 ) {
     let delta_secs = time.delta_secs();
 
-    for (config, intent, mut velocity, mut runtime) in &mut controllers {
-        // Skip during dash, ground pound, impact stun, or grapple
-        if runtime.dash_time_remaining > 0.0
-            || runtime.ground_pound_active
-            || runtime.ground_pound_hover_remaining > 0.0
-            || runtime.ground_pound_impact_stun > 0.0
-            || !matches!(runtime.grapple_phase, PlatformerGrapplePhase::Idle)
-        {
+    for (config, intent, directives, mut velocity, mut runtime) in &mut controllers {
+        if directives.suppress_jump_logic {
             continue;
         }
 
@@ -273,7 +207,6 @@ pub(crate) fn apply_jump_logic(
             continue;
         }
 
-        // Wall cling: if wall contact and cling duration > 0, apply cling gravity
         if is_wall_clinging {
             let cling_gravity =
                 config.jump.base_gravity() * config.walls.wall_cling_gravity_multiplier;
@@ -299,7 +232,6 @@ pub(crate) fn apply_jump_logic(
 
         velocity.y -= config.jump.base_gravity() * gravity_multiplier * delta_secs;
 
-        // Enforce terminal velocity
         if config.jump.max_fall_speed > 0.0 {
             velocity.y = velocity.y.max(-config.jump.max_fall_speed);
         }
@@ -312,6 +244,7 @@ pub(crate) fn apply_wall_interactions(
         (
             &PlatformerControllerConfig,
             &PlatformerMovementIntent,
+            &PlatformerControllerDirectives,
             &mut LinearVelocity,
             &mut PlatformerControllerRuntimeState,
         ),
@@ -320,16 +253,14 @@ pub(crate) fn apply_wall_interactions(
 ) {
     let delta_secs = time.delta_secs();
 
-    for (config, intent, mut velocity, mut runtime) in &mut controllers {
-        if runtime.dash_time_remaining > 0.0
-            || runtime.ground_pound_active
-            || runtime.ground_pound_hover_remaining > 0.0
-        {
+    for (config, intent, directives, mut velocity, mut runtime) in &mut controllers {
+        if directives.suppress_wall_interactions {
             continue;
         }
 
         if runtime.pre_ground.is_some() {
             runtime.wall_cling_remaining = 0.0;
+            runtime.was_wall_clinging = false;
             continue;
         }
 
@@ -343,7 +274,6 @@ pub(crate) fn apply_wall_interactions(
                     || wall_input_matches(wall.side, intent.move_axis))
         });
 
-        // Wall cling logic
         if config.walls.wall_cling_max_duration > 0.0
             && wall_contact.as_ref().is_some_and(|wall| {
                 !config.walls.wall_slide_requires_input
@@ -351,7 +281,6 @@ pub(crate) fn apply_wall_interactions(
             })
         {
             if runtime.wall_cling_remaining <= 0.0 && velocity.y <= 0.0 {
-                // Start a new cling
                 runtime.wall_cling_remaining = config.walls.wall_cling_max_duration;
                 if !runtime.was_wall_clinging {
                     runtime.pending_wall_cling_started =
@@ -531,7 +460,6 @@ pub(crate) fn move_controllers(
                 && !was_grounded
                 && next_velocity.y <= 0.0
             {
-                // Ledge assist: nudge horizontally to land on ledge edges
                 let preferred_sign =
                     sign_or_fallback(next_velocity.x, runtime_snapshot.facing_sign);
                 let signs = [preferred_sign, -preferred_sign];
@@ -600,9 +528,6 @@ pub(crate) fn move_controllers(
         if runtime.ground.is_some() {
             runtime.coyote_time_remaining = config.jump.coyote_time;
             runtime.remaining_air_jumps = config.jump.max_air_jumps;
-            if config.dash.refill_on_ground {
-                runtime.remaining_dashes = config.dash.max_charges;
-            }
             velocity.y = velocity.y.max(
                 inherited_platform_velocity(
                     runtime.support_velocity,
@@ -652,41 +577,6 @@ fn start_ground_or_air_jump(
         velocity: velocity.0,
         used_buffer,
     });
-}
-
-fn resolve_dash_direction(
-    intent: &PlatformerMovementIntent,
-    runtime: &PlatformerControllerRuntimeState,
-    velocity: Vec2,
-    config: &PlatformerControllerConfig,
-) -> Vec2 {
-    if intent.dash_direction.length_squared()
-        >= config.dash.direction_input_threshold * config.dash.direction_input_threshold
-    {
-        return intent.dash_direction.normalize();
-    }
-
-    if intent.move_axis.abs() >= config.dash.direction_input_threshold {
-        return Vec2::new(intent.move_axis.signum(), 0.0);
-    }
-
-    if velocity.x.abs() >= config.dash.direction_input_threshold {
-        return Vec2::new(velocity.x.signum(), 0.0);
-    }
-
-    Vec2::new(sign_or_fallback(runtime.facing_sign, 1.0), 0.0)
-}
-
-fn dash_velocity(
-    config: &PlatformerControllerConfig,
-    dash_direction: Vec2,
-    current_velocity: Vec2,
-) -> Vec2 {
-    let mut velocity = dash_direction.normalize_or_zero() * config.dash.dash_speed();
-    if config.dash.preserve_vertical_velocity && dash_direction.y.abs() <= 0.01 {
-        velocity.y = current_velocity.y;
-    }
-    velocity
 }
 
 fn try_corner_correction(

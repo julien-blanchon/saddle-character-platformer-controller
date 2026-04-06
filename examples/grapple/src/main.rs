@@ -12,15 +12,15 @@
 //!   R                   — release grapple
 //!   W / Up              — retract rope (pull closer)
 //!   S / Down            — extend rope (swing wider)
-//!   Shift               — dash
 
 use avian2d::prelude::*;
 use bevy::{app::AppExit, camera::ScalingMode, prelude::*, window::WindowResolution};
 use saddle_character_platformer_controller::{
     PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerPlugin,
-    PlatformerControllerState, PlatformerControllerSystems, PlatformerGrappleConfig,
-    PlatformerGrapplePhase, PlatformerGrapplePoint, PlatformerMotionPhase,
-    PlatformerMovementIntent,
+    PlatformerControllerState, PlatformerControllerSystems, PlatformerGrappleBundle,
+    PlatformerGrappleConfig, PlatformerGrappleIntent, PlatformerGrapplePhase,
+    PlatformerGrapplePlugin, PlatformerGrapplePoint, PlatformerGrappleState,
+    PlatformerMotionPhase, PlatformerMovementIntent,
 };
 use saddle_pane::prelude::*;
 
@@ -86,7 +86,10 @@ fn main() -> AppExit {
         }))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
         .add_plugins(PhysicsPlugins::default().with_length_unit(20.0))
-        .add_plugins(PlatformerControllerPlugin::always_on(FixedUpdate))
+        .add_plugins((
+            PlatformerControllerPlugin::always_on(FixedUpdate),
+            PlatformerGrapplePlugin::always_on(FixedUpdate),
+        ))
         .add_plugins((
             bevy_flair::FlairPlugin,
             bevy_input_focus::InputDispatchPlugin,
@@ -129,13 +132,6 @@ fn setup_scene(mut commands: Commands) {
             max_air_jumps: 1,
             ..default()
         },
-        grapple: PlatformerGrappleConfig {
-            max_range: 300.0,
-            pull_speed: 400.0,
-            detach_speed_boost: 1.3,
-            aim_assist_angle: 0.5,
-            ..default()
-        },
         ..default()
     };
 
@@ -152,6 +148,7 @@ fn setup_scene(mut commands: Commands) {
             config,
         )
         .with_transform(Transform::from_xyz(-250.0, -100.0, 10.0)),
+        PlatformerGrappleBundle::default(),
     ));
 
     // --- Level geometry ---
@@ -231,7 +228,7 @@ fn setup_scene(mut commands: Commands) {
         Name::new("Instructions"),
         Text::new(
             "A/D: Move  |  Space: Jump / Detach  |  E: Fire Grapple  |  R: Release\n\
-             W/S: Retract/Extend Rope  |  Shift: Dash  |  Swing between anchor points!",
+             W/S: Retract/Extend Rope  |  Swing between anchor points!",
         ),
         TextFont {
             font_size: 16.0,
@@ -263,46 +260,49 @@ fn spawn_block(commands: &mut Commands, name: &str, center: Vec2, size: Vec2, co
 
 fn drive_keyboard_intent(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut intent: Single<&mut PlatformerMovementIntent, With<Player>>,
+    mut movement_intent: Single<&mut PlatformerMovementIntent, With<Player>>,
+    mut grapple_intent: Single<&mut PlatformerGrappleIntent, With<Player>>,
 ) {
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
 
-    intent.move_axis = right as i8 as f32 - left as i8 as f32;
-    intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
-    intent.jump_held = keyboard.pressed(KeyCode::Space);
-    intent.dash_pressed = keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+    movement_intent.move_axis = right as i8 as f32 - left as i8 as f32;
+    movement_intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
+    movement_intent.jump_held = keyboard.pressed(KeyCode::Space);
+    movement_intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
 
-    // Grapple controls
-    intent.grapple_pressed = keyboard.just_pressed(KeyCode::KeyE);
-    intent.grapple_released = keyboard.just_pressed(KeyCode::KeyR);
-    intent.grapple_retract = keyboard.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]);
-    intent.grapple_extend = keyboard.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+    grapple_intent.pressed = keyboard.just_pressed(KeyCode::KeyE);
+    grapple_intent.released = keyboard.just_pressed(KeyCode::KeyR);
+    grapple_intent.retract = keyboard.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]);
+    grapple_intent.extend = keyboard.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+    grapple_intent.direction = Vec2::ZERO;
 }
 
 fn sync_pane_to_config(
     pane: Res<GrapplePane>,
-    mut controllers: Query<&mut PlatformerControllerConfig, With<Player>>,
+    mut grapples: Query<&mut PlatformerGrappleConfig, With<Player>>,
 ) {
     if !pane.is_changed() {
         return;
     }
-    for mut config in &mut controllers {
-        config.grapple.max_range = pane.max_range;
-        config.grapple.pull_speed = pane.pull_speed;
-        config.grapple.detach_speed_boost = pane.detach_boost;
-        config.grapple.retract_speed = pane.retract_speed;
-        config.grapple.swing_input_force = pane.swing_input_force;
+    for mut config in &mut grapples {
+        config.max_range = pane.max_range;
+        config.pull_speed = pane.pull_speed;
+        config.detach_speed_boost = pane.detach_boost;
+        config.retract_speed = pane.retract_speed;
+        config.swing_input_force = pane.swing_input_force;
     }
 }
 
 fn update_pane_monitors(
-    player: Single<&PlatformerControllerState, With<Player>>,
+    player: Single<(&PlatformerControllerState, &PlatformerGrappleState), With<Player>>,
     mut pane: ResMut<GrapplePane>,
 ) {
-    pane.phase = format!("{:?}", player.phase);
-    pane.rope_length = match player.grapple_phase {
+    pane.phase = match player.1.phase {
+        PlatformerGrapplePhase::Idle => format!("{:?}", player.0.phase),
+        active_phase => format!("{:?}", active_phase),
+    };
+    pane.rope_length = match player.1.phase {
         PlatformerGrapplePhase::Pulling { rope_length, .. } => rope_length,
         _ => 0.0,
     };
@@ -320,26 +320,29 @@ fn follow_camera(
     camera.1.translation = camera.1.translation.lerp(desired, blend);
 }
 
-fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), With<Player>>) {
-    player.1.color = match player.0.phase {
-        PlatformerMotionPhase::Grounded => Color::srgb(0.94, 0.58, 0.22),
-        PlatformerMotionPhase::Dashing => Color::srgb(0.98, 0.28, 0.48),
-        PlatformerMotionPhase::Rising => Color::srgb(0.98, 0.82, 0.30),
-        PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
-        PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),
-        PlatformerMotionPhase::WallSliding => Color::srgb(0.42, 0.76, 0.96),
-        PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
-        PlatformerMotionPhase::GroundPounding => Color::srgb(0.88, 0.18, 0.18),
-        PlatformerMotionPhase::Grappling => Color::srgb(0.30, 0.92, 0.40),
-        PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
+fn tint_player(
+    mut player: Single<(&PlatformerControllerState, &PlatformerGrappleState, &mut Sprite), With<Player>>,
+) {
+    player.2.color = if !matches!(player.1.phase, PlatformerGrapplePhase::Idle) {
+        Color::srgb(0.30, 0.92, 0.40)
+    } else {
+        match player.0.phase {
+            PlatformerMotionPhase::Grounded => Color::srgb(0.94, 0.58, 0.22),
+            PlatformerMotionPhase::Rising => Color::srgb(0.98, 0.82, 0.30),
+            PlatformerMotionPhase::Apex => Color::srgb(0.86, 0.86, 0.40),
+            PlatformerMotionPhase::Falling => Color::srgb(0.84, 0.42, 0.26),
+            PlatformerMotionPhase::WallSliding => Color::srgb(0.42, 0.76, 0.96),
+            PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
+            PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
+        }
     };
 }
 
 fn draw_grapple_rope(
-    player: Single<(&Transform, &PlatformerControllerState), With<Player>>,
+    player: Single<(&Transform, &PlatformerGrappleState), With<Player>>,
     mut gizmos: Gizmos,
 ) {
-    if let PlatformerGrapplePhase::Pulling { target, .. } = player.1.grapple_phase {
+    if let PlatformerGrapplePhase::Pulling { target, .. } = player.1.phase {
         let from = player.0.translation.xy();
         gizmos.line_2d(from, target, Color::srgb(0.30, 0.92, 0.40));
         gizmos.circle_2d(target, 6.0, Color::srgb(0.30, 0.92, 0.40));
