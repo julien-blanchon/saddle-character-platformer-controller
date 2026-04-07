@@ -17,10 +17,10 @@ use avian2d::prelude::*;
 use bevy::{app::AppExit, camera::ScalingMode, prelude::*, window::WindowResolution};
 use saddle_character_platformer_controller::{
     PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerPlugin,
-    PlatformerControllerState, PlatformerControllerSystems, PlatformerGrappleBundle,
-    PlatformerGrappleConfig, PlatformerGrappleIntent, PlatformerGrapplePhase,
-    PlatformerGrapplePlugin, PlatformerGrapplePoint, PlatformerGrappleState,
-    PlatformerMotionPhase, PlatformerMovementIntent,
+    PlatformerControllerState, PlatformerGrappleBundle, PlatformerGrappleConfig,
+    PlatformerGrappleIntent, PlatformerGrapplePhase, PlatformerGrapplePlugin,
+    PlatformerGrapplePoint, PlatformerGrappleState, PlatformerMotionPhase,
+    PlatformerMovementIntent,
 };
 use saddle_pane::prelude::*;
 
@@ -68,11 +68,6 @@ impl Default for GrapplePane {
     }
 }
 
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum DemoSystems {
-    DriveIntent,
-}
-
 fn main() -> AppExit {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)))
@@ -98,15 +93,8 @@ fn main() -> AppExit {
             PanePlugin,
         ))
         .register_pane::<GrapplePane>()
-        .configure_sets(
-            FixedUpdate,
-            DemoSystems::DriveIntent.before(PlatformerControllerSystems::ReadIntent),
-        )
         .add_systems(Startup, setup_scene)
-        .add_systems(
-            FixedUpdate,
-            drive_keyboard_intent.in_set(DemoSystems::DriveIntent),
-        )
+        .add_systems(Update, drive_keyboard_intent)
         .add_systems(Update, (sync_pane_to_config, update_pane_monitors).chain())
         .add_systems(PostUpdate, (follow_camera, tint_player, draw_grapple_rope))
         .run()
@@ -266,16 +254,30 @@ fn drive_keyboard_intent(
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
 
+    // Continuous state — always overwrite with latest value.
     movement_intent.move_axis = right as i8 as f32 - left as i8 as f32;
-    movement_intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
     movement_intent.jump_held = keyboard.pressed(KeyCode::Space);
-    movement_intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
 
-    grapple_intent.pressed = keyboard.just_pressed(KeyCode::KeyE);
-    grapple_intent.released = keyboard.just_pressed(KeyCode::KeyR);
+    // One-shot flags — latch on, never overwrite to false.
+    if keyboard.just_pressed(KeyCode::Space) {
+        movement_intent.jump_pressed = true;
+    }
+    if keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
+        movement_intent.drop_pressed = true;
+    }
+
+    // Grapple — continuous state
     grapple_intent.retract = keyboard.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]);
     grapple_intent.extend = keyboard.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
     grapple_intent.direction = Vec2::ZERO;
+
+    // Grapple — one-shot flags
+    if keyboard.just_pressed(KeyCode::KeyE) {
+        grapple_intent.pressed = true;
+    }
+    if keyboard.just_pressed(KeyCode::KeyR) {
+        grapple_intent.released = true;
+    }
 }
 
 fn sync_pane_to_config(

@@ -4,7 +4,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy_enhanced_input::prelude::{Cancel as InputCancel, Press as InputPress, *};
 use saddle_character_platformer_controller::{PlatformerDashIntent, PlatformerMovementIntent};
-use support::{DemoFixedSystems, DemoPlayer, DemoScene};
+use support::{DemoPlayer, DemoScene};
 
 #[derive(Debug, InputAction)]
 #[action_output(Vec2)]
@@ -38,10 +38,6 @@ fn main() -> AppExit {
     app.add_observer(cache_drop_press);
     app.add_observer(cache_dash_press);
     app.add_systems(PostStartup, attach_demo_actions);
-    app.add_systems(
-        FixedUpdate,
-        reset_default_intent.in_set(DemoFixedSystems::DriveIntent),
-    );
     app.run()
 }
 
@@ -67,10 +63,6 @@ fn attach_demo_actions(mut commands: Commands, player: Single<Entity, With<DemoP
             bindings![KeyCode::ShiftLeft, KeyCode::ShiftRight, GamepadButton::West],
         ),
     ]));
-}
-
-fn reset_default_intent(mut intent: Single<&mut PlatformerMovementIntent, With<DemoPlayer>>) {
-    intent.move_axis = 0.0;
 }
 
 fn cache_move_axis(

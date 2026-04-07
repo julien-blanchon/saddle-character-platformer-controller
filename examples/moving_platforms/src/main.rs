@@ -80,7 +80,6 @@ impl Default for MovingPlatformPane {
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum DemoSystems {
-    DriveIntent,
     AnimatePlatforms,
 }
 
@@ -112,18 +111,13 @@ fn main() -> AppExit {
         .register_pane::<MovingPlatformPane>()
         .configure_sets(
             FixedUpdate,
-            (
-                DemoSystems::DriveIntent.before(PlatformerControllerSystems::ReadIntent),
-                DemoSystems::AnimatePlatforms.before(PlatformerControllerSystems::SenseContacts),
-            ),
+            DemoSystems::AnimatePlatforms.before(PlatformerControllerSystems::SenseContacts),
         )
         .add_systems(Startup, setup_scene)
+        .add_systems(Update, drive_keyboard_intent)
         .add_systems(
             FixedUpdate,
-            (
-                drive_keyboard_intent.in_set(DemoSystems::DriveIntent),
-                animate_platforms.in_set(DemoSystems::AnimatePlatforms),
-            ),
+            animate_platforms.in_set(DemoSystems::AnimatePlatforms),
         )
         .add_systems(Update, (sync_pane_to_config, update_pane_monitors).chain())
         .add_systems(PostUpdate, (follow_camera, tint_player))
@@ -304,10 +298,17 @@ fn drive_keyboard_intent(
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
 
+    // Continuous state — always overwrite with latest value.
     intent.move_axis = right as i8 as f32 - left as i8 as f32;
-    intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
     intent.jump_held = keyboard.pressed(KeyCode::Space);
-    intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+
+    // One-shot flags — latch on, never overwrite to false.
+    if keyboard.just_pressed(KeyCode::Space) {
+        intent.jump_pressed = true;
+    }
+    if keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
+        intent.drop_pressed = true;
+    }
 }
 
 // ---------------------------------------------------------------------------

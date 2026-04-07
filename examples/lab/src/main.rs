@@ -12,7 +12,7 @@ use saddle_character_platformer_controller::{
     PlatformerGroundPoundPlugin, PlatformerJumpKind, PlatformerMovementIntent,
     PlatformerWallSide, WallJumpStarted,
 };
-use support::{DemoFixedSystems, DemoPlayer, DemoScene};
+use support::{DemoPlayer, DemoScene};
 
 const LAB_BRP_PORT: u16 = 15_732;
 
@@ -82,18 +82,16 @@ fn main() {
 
     app.configure_sets(
         FixedUpdate,
-        LabFixedSystems::ScriptedIntent
-            .after(DemoFixedSystems::DriveIntent)
-            .before(PlatformerControllerSystems::ReadIntent),
+        LabFixedSystems::ScriptedIntent.before(PlatformerControllerSystems::ReadIntent),
     );
     app.configure_sets(
         FixedUpdate,
         LabFixedSystems::ObserveMessages.after(PlatformerControllerSystems::SyncState),
     );
+    app.add_systems(Update, support::drive_keyboard_intent);
     app.add_systems(
         FixedUpdate,
         (
-            support::drive_keyboard_intent.in_set(DemoFixedSystems::DriveIntent),
             apply_scripted_control.in_set(LabFixedSystems::ScriptedIntent),
             record_jump_messages.in_set(LabFixedSystems::ObserveMessages),
             record_dash_messages.in_set(LabFixedSystems::ObserveMessages),

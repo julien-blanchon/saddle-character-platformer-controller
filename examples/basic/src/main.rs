@@ -8,8 +8,7 @@ use avian2d::prelude::*;
 use bevy::{app::AppExit, camera::ScalingMode, prelude::*, window::WindowResolution};
 use saddle_character_platformer_controller::{
     PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerPlugin,
-    PlatformerControllerState, PlatformerControllerSystems, PlatformerMotionPhase,
-    PlatformerMovementIntent,
+    PlatformerControllerState, PlatformerMotionPhase, PlatformerMovementIntent,
 };
 use saddle_pane::prelude::*;
 
@@ -30,6 +29,9 @@ struct Player;
 struct FollowCamera {
     smoothing: f32,
 }
+
+#[derive(Component)]
+struct DiagnosticHud;
 
 // ---------------------------------------------------------------------------
 // Pane — live-tweak parameters
@@ -72,15 +74,6 @@ impl Default for BasicPane {
 }
 
 // ---------------------------------------------------------------------------
-// System sets for ordering
-// ---------------------------------------------------------------------------
-
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum DemoSystems {
-    DriveIntent,
-}
-
-// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -110,18 +103,14 @@ fn main() -> AppExit {
             PanePlugin,
         ))
         .register_pane::<BasicPane>()
-        // --- Ordering: keyboard intent runs before the controller reads it ---
-        .configure_sets(
-            FixedUpdate,
-            DemoSystems::DriveIntent.before(PlatformerControllerSystems::ReadIntent),
-        )
         // --- Systems ---
         .add_systems(Startup, setup_scene)
-        .add_systems(
-            FixedUpdate,
-            drive_keyboard_intent.in_set(DemoSystems::DriveIntent),
-        )
-        .add_systems(Update, (sync_pane_to_config, update_pane_monitors).chain())
+        // Input must run in Update (not FixedUpdate) because just_pressed is
+        // a per-render-frame event — it's true for exactly one Update frame
+        // then cleared.  FixedUpdate doesn't tick every render frame, so
+        // reading just_pressed from FixedUpdate misses ~50% of key presses.
+        .add_systems(Update, drive_keyboard_intent)
+        .add_systems(Update, (sync_pane_to_config, update_pane_monitors, update_diagnostic_hud).chain())
         .add_systems(PostUpdate, (follow_camera, tint_player))
         .run()
 }
@@ -131,6 +120,28 @@ fn main() -> AppExit {
 // ---------------------------------------------------------------------------
 
 fn setup_scene(mut commands: Commands) {
+    // Diagnostic HUD — shows live controller state
+    commands.spawn((
+        Name::new("Diagnostic HUD"),
+        DiagnosticHud,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(18.0),
+            bottom: Val::Px(18.0),
+            width: Val::Px(420.0),
+            padding: UiRect::all(Val::Px(12.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.02, 0.05, 0.85)),
+        Text::new("Loading..."),
+        TextFont {
+            font_size: 14.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.7, 0.9, 0.7)),
+        ZIndex(10),
+    ));
+
     // Camera
     commands.spawn((
         Name::new("Camera"),
@@ -242,10 +253,20 @@ fn drive_keyboard_intent(
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
 
+    // Continuous state — always overwrite with latest value.
     intent.move_axis = right as i8 as f32 - left as i8 as f32;
-    intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
     intent.jump_held = keyboard.pressed(KeyCode::Space);
-    intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+
+    // One-shot flags — latch on, never overwrite to false.
+    // The controller's clear_transient_intents (in FixedUpdate) handles
+    // clearing after consumption.  This ensures the press survives across
+    // render frames that have no FixedUpdate tick.
+    if keyboard.just_pressed(KeyCode::Space) {
+        intent.jump_pressed = true;
+    }
+    if keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
+        intent.drop_pressed = true;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,4 +328,35 @@ fn tint_player(mut player: Single<(&PlatformerControllerState, &mut Sprite), Wit
         PlatformerMotionPhase::WallClinging => Color::srgb(0.32, 0.56, 0.88),
         PlatformerMotionPhase::Airborne => Color::srgb(0.92, 0.60, 0.30),
     };
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic HUD — live controller state on screen
+// ---------------------------------------------------------------------------
+
+fn update_diagnostic_hud(
+    player: Single<(&Transform, &PlatformerControllerState), With<Player>>,
+    mut hud: Single<&mut Text, With<DiagnosticHud>>,
+) {
+    let (transform, state) = *player;
+    hud.0 = format!(
+        "A/D move  Space jump  S drop\n\n\
+         Phase: {:?}\n\
+         Grounded: {}\n\
+         Position: ({:.1}, {:.1})\n\
+         Velocity: ({:.1}, {:.1})\n\
+         Coyote / Buffer: {:.2}s / {:.2}s\n\
+         Air jumps left: {}\n\
+         Wall: {:?}",
+        state.phase,
+        state.is_grounded,
+        transform.translation.x,
+        transform.translation.y,
+        state.velocity.x,
+        state.velocity.y,
+        state.coyote_time_remaining,
+        state.jump_buffer_remaining,
+        state.remaining_air_jumps,
+        state.wall.as_ref().map(|w| w.side),
+    );
 }

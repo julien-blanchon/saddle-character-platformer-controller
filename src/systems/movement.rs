@@ -17,6 +17,15 @@ use crate::{
 
 use super::sensing::probe_contacts;
 
+/// Maximum shape-cast distance at which the character is considered physically
+/// touching the ground for velocity clamping and gravity purposes.  Contacts
+/// detected beyond this threshold (but within `ground_probe_distance`) still
+/// count as "probe-grounded" for state purposes (coyote time, air-jump reset,
+/// ground-jump eligibility) but do NOT zero vertical velocity or skip gravity.
+/// This prevents the character from floating above the surface when falling
+/// through the large probe zone.
+const GROUND_CONTACT_THRESHOLD: f32 = 1.0;
+
 type SurfaceQueryFilter = (
     Option<&'static Position>,
     Option<&'static Rotation>,
@@ -45,6 +54,14 @@ pub(crate) fn apply_horizontal_movement(
         }
 
         let grounded = runtime.pre_ground.is_some();
+        // "On ground" = physically touching (or very close to) the surface.
+        // Distinguished from probe-grounded to avoid zeroing velocity while
+        // still falling through the probe zone (ground_probe_distance can be
+        // large, e.g. 10 units).
+        let on_ground = runtime
+            .pre_ground
+            .as_ref()
+            .is_some_and(|c| c.distance < GROUND_CONTACT_THRESHOLD);
         let inherited_velocity = if grounded {
             inherited_platform_velocity(
                 runtime.support_velocity,
@@ -98,7 +115,10 @@ pub(crate) fn apply_horizontal_movement(
 
         velocity.x = local_velocity.x + inherited_velocity.x + surface_vel.x;
 
-        if grounded && velocity.y <= inherited_velocity.y {
+        // Only clamp vertical velocity when physically on the surface, not
+        // merely within the probe zone. Otherwise the character's downward
+        // velocity is killed while still floating above the ground.
+        if on_ground && velocity.y <= inherited_velocity.y {
             velocity.y = inherited_velocity.y + surface_vel.y;
         }
     }
@@ -195,13 +215,20 @@ pub(crate) fn apply_jump_logic(
             }
         }
 
+        let on_ground = runtime
+            .pre_ground
+            .as_ref()
+            .is_some_and(|c| c.distance < GROUND_CONTACT_THRESHOLD);
         let grounded_inherited_y = if grounded {
             inherited_platform_velocity(runtime.support_velocity, PlatformVelocityInheritance::Full)
                 .y
         } else {
             0.0
         };
-        let skip_gravity = grounded && velocity.y <= grounded_inherited_y + 0.1;
+        // Only skip gravity when physically on the surface, not merely within
+        // the probe zone. This lets the character keep falling until it
+        // actually reaches the ground.
+        let skip_gravity = on_ground && velocity.y <= grounded_inherited_y + 0.1;
 
         if skip_gravity {
             continue;
@@ -421,7 +448,31 @@ pub(crate) fn move_controllers(
             delta_secs,
         );
 
-        if contacts.ground.is_none() && next_velocity.y <= 0.0 {
+        // Snap to ground surface when the probe detected ground but the
+        // character is still floating above it.  Without this, a large
+        // ground_probe_distance causes the character to hover at whatever
+        // height it entered the probe zone (velocity was already zeroed
+        // by apply_horizontal_movement/apply_jump_logic).
+        if let Some(ground) = contacts.ground.as_ref() {
+            if ground.distance > GROUND_CONTACT_THRESHOLD && next_velocity.y <= 0.0 {
+                next_position.y -= ground.distance;
+                next_velocity.y = 0.0;
+                contacts = probe_contacts(
+                    entity,
+                    &collider,
+                    next_position,
+                    rotation,
+                    next_velocity,
+                    &config,
+                    &runtime_snapshot,
+                    &controller_params.p0().spatial_query,
+                    &surfaces,
+                    config.sensing.ground_probe_distance,
+                    runtime_snapshot.drop_through_remaining > 0.0,
+                    delta_secs,
+                );
+            }
+        } else if next_velocity.y <= 0.0 {
             let snap_contacts = probe_contacts(
                 entity,
                 &collider,

@@ -6,7 +6,8 @@ use saddle_character_platformer_controller::{
     PlatformVelocityInheritance, PlatformerControllerBundle, PlatformerControllerConfig,
     PlatformerControllerPlugin, PlatformerControllerState, PlatformerControllerSystems,
     PlatformerDashBundle, PlatformerDashConfig, PlatformerDashIntent, PlatformerDashPlugin,
-    PlatformerDashState, PlatformerMotionPhase, PlatformerOneWayPlatform, PlatformerWallSide,
+    PlatformerDashState, PlatformerMotionPhase, PlatformerMovementIntent,
+    PlatformerOneWayPlatform, PlatformerWallSide,
 };
 use saddle_pane::prelude::*;
 
@@ -136,7 +137,6 @@ pub struct MovingPlatform {
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DemoFixedSystems {
-    DriveIntent,
     AnimatePlatforms,
 }
 
@@ -286,10 +286,6 @@ pub fn configure_demo_app(app: &mut App, scene: DemoScene, enhanced_input: bool)
     ));
     app.configure_sets(
         FixedUpdate,
-        DemoFixedSystems::DriveIntent.before(PlatformerControllerSystems::ReadIntent),
-    );
-    app.configure_sets(
-        FixedUpdate,
         DemoFixedSystems::AnimatePlatforms.before(PlatformerControllerSystems::SenseContacts),
     );
     app.add_systems(Startup, setup_scene);
@@ -332,24 +328,31 @@ pub fn install_pane(app: &mut App) {
 
 pub fn drive_keyboard_intent(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut movement_intents: Query<
-        &mut saddle_character_platformer_controller::PlatformerMovementIntent,
-        With<DemoPlayer>,
-    >,
+    mut movement_intents: Query<&mut PlatformerMovementIntent, With<DemoPlayer>>,
     mut dash_intents: Query<&mut PlatformerDashIntent, With<DemoPlayer>>,
 ) {
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
 
     if let Ok(mut intent) = movement_intents.single_mut() {
+        // Continuous state — always overwrite with latest value.
         intent.move_axis = right as i8 as f32 - left as i8 as f32;
-        intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
         intent.jump_held = keyboard.pressed(KeyCode::Space);
-        intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+
+        // One-shot flags — latch on, never overwrite to false.
+        if keyboard.just_pressed(KeyCode::Space) {
+            intent.jump_pressed = true;
+        }
+        if keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
+            intent.drop_pressed = true;
+        }
     }
 
     if let Ok(mut intent) = dash_intents.single_mut() {
-        intent.pressed = keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        // One-shot flag — latch on.
+        if keyboard.any_just_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+            intent.pressed = true;
+        }
         intent.direction = Vec2::ZERO;
     }
 }
@@ -518,36 +521,43 @@ fn spawn_wall_jump_scene(commands: &mut Commands) {
     spawn_block(
         commands,
         "Left Wall",
-        Vec2::new(-120.0, 30.0),
+        Vec2::new(-110.0, 30.0),
         Vec2::new(40.0, 360.0),
         Color::srgb(0.25, 0.30, 0.36),
     );
     spawn_block(
         commands,
         "Right Wall",
-        Vec2::new(120.0, 30.0),
+        Vec2::new(110.0, 30.0),
         Vec2::new(40.0, 360.0),
         Color::srgb(0.25, 0.30, 0.36),
     );
     spawn_block(
         commands,
-        "Left Ledge",
-        Vec2::new(-70.0, -5.0),
-        Vec2::new(62.0, 18.0),
+        "Left Ledge 1",
+        Vec2::new(-60.0, -30.0),
+        Vec2::new(72.0, 18.0),
         Color::srgb(0.43, 0.34, 0.30),
     );
     spawn_block(
         commands,
-        "Right Ledge",
-        Vec2::new(70.0, 85.0),
-        Vec2::new(62.0, 18.0),
+        "Right Ledge 1",
+        Vec2::new(60.0, 25.0),
+        Vec2::new(72.0, 18.0),
+        Color::srgb(0.43, 0.34, 0.30),
+    );
+    spawn_block(
+        commands,
+        "Left Ledge 2",
+        Vec2::new(-60.0, 75.0),
+        Vec2::new(72.0, 18.0),
         Color::srgb(0.43, 0.34, 0.30),
     );
     spawn_block(
         commands,
         "Finish Ledge",
-        Vec2::new(0.0, 170.0),
-        Vec2::new(150.0, 20.0),
+        Vec2::new(0.0, 130.0),
+        Vec2::new(160.0, 20.0),
         Color::srgb(0.38, 0.52, 0.40),
     );
 }

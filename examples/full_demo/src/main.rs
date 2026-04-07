@@ -17,7 +17,7 @@ use saddle_camera_pixel_camera::{
 use saddle_character_platformer_controller::{
     DashStarted, PlatformerControllerBundle, PlatformerControllerConfig, PlatformerDashBundle,
     PlatformerDashConfig, PlatformerDashPlugin, PlatformerDashState,
-    PlatformerControllerPlugin, PlatformerControllerState, PlatformerControllerSystems,
+    PlatformerControllerPlugin, PlatformerControllerState,
     PlatformerMotionPhase,
 };
 use saddle_character_platformer_controller_example_support as platformer_support;
@@ -101,7 +101,7 @@ struct FullDemoPane {
     dash_distance: f32,
     #[pane(slider, min = 0.05, max = 0.35, step = 0.01)]
     dash_duration: f32,
-    #[pane(slider, min = 1.0, max = 4.0, step = 1.0)]
+    #[pane(slider, min = 1.0, max = 6.0, step = 1.0)]
     pixel_zoom: f32,
     #[pane(slider, min = 2.0, max = 18.0, step = 0.25)]
     follow_smoothing: f32,
@@ -130,7 +130,7 @@ impl Default for FullDemoPane {
             time_to_apex: 0.38,
             dash_distance: 92.0,
             dash_duration: 0.16,
-            pixel_zoom: 2.0,
+            pixel_zoom: 3.0,
             follow_smoothing: 9.0,
             mountain_factor: 0.86,
             canopy_factor: 1.08,
@@ -177,17 +177,8 @@ fn main() -> AppExit {
         PanePlugin,
     ));
     app.register_pane::<FullDemoPane>();
-    app.configure_sets(
-        FixedUpdate,
-        platformer_support::DemoFixedSystems::DriveIntent
-            .before(PlatformerControllerSystems::ReadIntent),
-    );
     app.add_systems(Startup, setup);
-    app.add_systems(
-        FixedUpdate,
-        platformer_support::drive_keyboard_intent
-            .in_set(platformer_support::DemoFixedSystems::DriveIntent),
-    );
+    app.add_systems(Update, platformer_support::drive_keyboard_intent);
     app.add_systems(
         Update,
         (
@@ -220,7 +211,7 @@ fn setup(
             .expect("embedded aseprite library should parse"),
     );
 
-    let camera = PixelCamera::new(320, 180);
+    let camera = PixelCamera::new(480, 300);
     commands.spawn((
         Name::new("Pixel Camera Root"),
         CameraRoot,

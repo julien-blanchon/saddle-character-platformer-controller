@@ -13,8 +13,8 @@ use avian2d::prelude::*;
 use bevy::{app::AppExit, camera::ScalingMode, prelude::*, window::WindowResolution};
 use saddle_character_platformer_controller::{
     PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerPlugin,
-    PlatformerControllerState, PlatformerControllerSystems, PlatformerMotionPhase,
-    PlatformerMovementIntent, PlatformerSurfaceModifier,
+    PlatformerControllerState, PlatformerMotionPhase, PlatformerMovementIntent,
+    PlatformerSurfaceModifier,
 };
 use saddle_pane::prelude::*;
 
@@ -49,11 +49,6 @@ impl Default for SurfacePane {
     }
 }
 
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum DemoSystems {
-    DriveIntent,
-}
-
 fn main() -> AppExit {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)))
@@ -76,15 +71,8 @@ fn main() -> AppExit {
             PanePlugin,
         ))
         .register_pane::<SurfacePane>()
-        .configure_sets(
-            FixedUpdate,
-            DemoSystems::DriveIntent.before(PlatformerControllerSystems::ReadIntent),
-        )
         .add_systems(Startup, setup_scene)
-        .add_systems(
-            FixedUpdate,
-            drive_keyboard_intent.in_set(DemoSystems::DriveIntent),
-        )
+        .add_systems(Update, drive_keyboard_intent)
         .add_systems(Update, update_pane_monitors)
         .add_systems(PostUpdate, (follow_camera, tint_player))
         .run()
@@ -258,10 +246,17 @@ fn drive_keyboard_intent(
     let left = keyboard.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
     let right = keyboard.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
 
+    // Continuous state — always overwrite with latest value.
     intent.move_axis = right as i8 as f32 - left as i8 as f32;
-    intent.jump_pressed = keyboard.just_pressed(KeyCode::Space);
     intent.jump_held = keyboard.pressed(KeyCode::Space);
-    intent.drop_pressed = keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+
+    // One-shot flags — latch on, never overwrite to false.
+    if keyboard.just_pressed(KeyCode::Space) {
+        intent.jump_pressed = true;
+    }
+    if keyboard.any_just_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
+        intent.drop_pressed = true;
+    }
 }
 
 fn update_pane_monitors(
