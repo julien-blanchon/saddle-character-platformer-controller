@@ -29,6 +29,7 @@ pub fn list_scenarios() -> Vec<&'static str> {
         "platformer_controller_moving_platform",
         "platformer_controller_one_way",
         "platformer_controller_ground_pound",
+        "platformer_controller_air_jump",
     ]
 }
 
@@ -45,6 +46,7 @@ pub fn scenario_by_name(name: &str) -> Option<Scenario> {
         "platformer_controller_moving_platform" => Some(platformer_controller_moving_platform()),
         "platformer_controller_one_way" => Some(platformer_controller_one_way()),
         "platformer_controller_ground_pound" => Some(platformer_controller_ground_pound()),
+        "platformer_controller_air_jump" => Some(platformer_controller_air_jump()),
         _ => None,
     }
 }
@@ -559,5 +561,84 @@ fn platformer_controller_ground_pound() -> Scenario {
         }))
         .then(assertions::log_summary("platformer_controller_ground_pound summary"))
         .then(Action::Screenshot("ground_pound_impact".into()))
+        .build()
+}
+
+/// Verify that mid-air double-jump (max_air_jumps = 1) fires an AirJumpConsumed message
+/// and produces upward velocity, then depletes the air-jump budget so a second attempt fails.
+fn platformer_controller_air_jump() -> Scenario {
+    Scenario::builder("platformer_controller_air_jump")
+        .description(
+            "Spawn a player with one air jump allowed, perform a ground jump, then press jump \
+             again mid-air to consume the air-jump charge, and verify AirJumpConsumed fires \
+             and remaining_air_jumps reaches zero.",
+        )
+        .then(Action::Custom(Box::new(|world| {
+            let mut config = world.resource::<crate::support::DemoState>().scene.controller_config();
+            config.jump.max_air_jumps = 1;
+            support::teleport_player_with_config(
+                world,
+                Vec2::new(-220.0, -57.0),
+                Vec2::ZERO,
+                config,
+            );
+            support::set_scripted_control(world, 0.0, false, false, false, false);
+        })))
+        // Wait to settle onto ground.
+        .then(Action::WaitUntil {
+            label: "player grounded before air jump test".into(),
+            condition: Box::new(|world| {
+                world.resource::<support::DiagnosticsResource>().grounded
+            }),
+            max_frames: 120,
+        })
+        .then(Action::Screenshot("air_jump_grounded".into()))
+        // Ground jump.
+        .then(Action::Custom(Box::new(|world| {
+            support::set_scripted_control(world, 0.0, true, true, false, false);
+        })))
+        .then(Action::WaitUntil {
+            label: "player airborne after ground jump".into(),
+            condition: Box::new(|world| {
+                let diagnostics = world.resource::<support::DiagnosticsResource>();
+                !diagnostics.grounded && diagnostics.player_velocity.y > 50.0
+            }),
+            max_frames: 30,
+        })
+        .then(Action::Custom(Box::new(|world| {
+            support::set_scripted_control(world, 0.0, false, false, false, false);
+        })))
+        .then(Action::WaitFrames(10))
+        // Air jump while falling (release then press again).
+        .then(Action::Custom(Box::new(|world| {
+            support::set_scripted_control(world, 0.0, true, true, false, false);
+        })))
+        .then(Action::WaitUntil {
+            label: "air jump consumed".into(),
+            condition: Box::new(|world| {
+                let log = world.resource::<LabMessageLog>();
+                log.air_jump_consumed_count >= 1
+            }),
+            max_frames: 60,
+        })
+        .then(hard_assert("AirJumpConsumed message received", |world| {
+            world.resource::<LabMessageLog>().air_jump_consumed_count >= 1
+        }))
+        .then(assertions::custom(
+            "air jump charge was fully depleted",
+            |world| {
+                let log = world.resource::<LabMessageLog>();
+                log.air_jump_consumed_count >= 1
+                    && log.last_remaining_air_jumps == Some(0)
+            },
+        ))
+        .then(assertions::custom(
+            "player launched upward after air jump",
+            |world| {
+                world.resource::<support::DiagnosticsResource>().player_velocity.y > 50.0
+            },
+        ))
+        .then(Action::Screenshot("air_jump_consumed".into()))
+        .then(assertions::log_summary("platformer_controller_air_jump summary"))
         .build()
 }
