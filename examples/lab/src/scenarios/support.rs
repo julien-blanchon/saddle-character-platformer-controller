@@ -1,5 +1,6 @@
 use avian2d::prelude::{Collider, LinearVelocity};
 use bevy::prelude::*;
+use saddle_bevy_e2e::action::Action;
 
 use saddle_character_platformer_controller::{
     PlatformerControllerBundle, PlatformerControllerConfig, PlatformerControllerState,
@@ -47,6 +48,42 @@ pub fn player_ground_pound_state(world: &World) -> Option<PlatformerGroundPoundS
 pub fn teleport_player(world: &mut World, translation: Vec2, velocity: Vec2) {
     let scene = world.resource::<crate::support::DemoState>().scene;
     teleport_player_with_config(world, translation, velocity, scene.controller_config());
+}
+
+pub fn idle_player() -> Action {
+    Action::Custom(Box::new(|world| {
+        set_scripted_control(world, 0.0, false, false, false, false);
+    }))
+}
+
+pub fn walk_player(move_axis: f32) -> Action {
+    Action::Custom(Box::new(move |world| {
+        set_scripted_control(world, move_axis, false, false, false, false);
+    }))
+}
+
+pub fn jump_player(move_axis: f32) -> Action {
+    Action::Custom(Box::new(move |world| {
+        set_scripted_control(world, move_axis, true, true, false, false);
+    }))
+}
+
+pub fn dash_player(move_axis: f32) -> Action {
+    Action::Custom(Box::new(move |world| {
+        set_scripted_control(world, move_axis, false, false, true, false);
+    }))
+}
+
+pub fn drop_player() -> Action {
+    Action::Custom(Box::new(|world| {
+        set_scripted_control(world, 0.0, false, false, false, true);
+    }))
+}
+
+pub fn ground_pound_player(move_axis: f32) -> Action {
+    Action::Custom(Box::new(move |world| {
+        set_scripted_control_with_ground_pound(world, move_axis, false, false, false, false, true);
+    }))
 }
 
 pub fn teleport_player_with_config(

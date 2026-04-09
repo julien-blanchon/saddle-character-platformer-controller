@@ -84,8 +84,8 @@ fn platformer_controller_coyote_jump() -> Scenario {
         .description("Walk off a ledge in the basic scene, jump during the coyote window, and verify the jump is classified correctly.")
         .then(Action::Custom(Box::new(|world| {
             support::teleport_player(world, Vec2::new(-36.0, -57.0), Vec2::ZERO);
-            support::set_scripted_control(world, 1.0, false, false, false, false);
         })))
+        .then(support::walk_player(1.0))
         .then(Action::WaitFrames(8))
         .then(Action::Screenshot("coyote_setup".into()))
         .then(Action::WaitUntil {
@@ -96,9 +96,7 @@ fn platformer_controller_coyote_jump() -> Scenario {
             }),
             max_frames: 90,
         })
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 1.0, true, true, false, false);
-        })))
+        .then(support::jump_player(1.0))
         .then(Action::WaitUntil {
             label: "coyote jump launched".into(),
             condition: Box::new(|world| {
@@ -141,8 +139,8 @@ fn platformer_controller_jump_buffer() -> Scenario {
                 Vec2::new(0.0, -220.0),
                 config,
             );
-            support::set_scripted_control(world, 0.0, false, false, false, false);
         })))
+        .then(support::idle_player())
         .then(Action::WaitUntil {
             label: "pre-landing fall".into(),
             condition: Box::new(|world| {
@@ -154,9 +152,7 @@ fn platformer_controller_jump_buffer() -> Scenario {
             max_frames: 20,
         })
         .then(Action::Screenshot("jump_buffer_fall".into()))
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, true, true, false, false);
-        })))
+        .then(support::jump_player(0.0))
         .then(Action::WaitUntil {
             label: "buffered jump fired".into(),
             condition: Box::new(|world| {
@@ -195,8 +191,8 @@ fn platformer_controller_dash() -> Scenario {
         )
         .then(Action::Custom(Box::new(|world| {
             support::teleport_player(world, Vec2::new(-220.0, -57.0), Vec2::ZERO);
-            support::set_scripted_control(world, 1.0, false, false, true, false);
         })))
+        .then(support::dash_player(1.0))
         .then(Action::WaitUntil {
             label: "dash started".into(),
             condition: Box::new(|world| {
@@ -224,9 +220,7 @@ fn platformer_controller_dash() -> Scenario {
         }))
         .then(Action::Screenshot("dash_launch".into()))
         .then(Action::WaitFrames(1))
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, false, false, false, false);
-        })))
+        .then(support::idle_player())
         .then(Action::WaitUntil {
             label: "dash recovered".into(),
             condition: Box::new(|world| {
@@ -255,8 +249,8 @@ fn platformer_controller_wall_jump() -> Scenario {
         .description("Enter a valid wall slide in the shaft, then jump away and verify the wall-jump side and launch vector.")
         .then(Action::Custom(Box::new(|world| {
             support::teleport_player(world, Vec2::new(-92.0, 36.0), Vec2::new(0.0, -20.0));
-            support::set_scripted_control(world, -1.0, false, false, false, false);
         })))
+        .then(support::walk_player(-1.0))
         .then(Action::WaitUntil {
             label: "wall sliding".into(),
             condition: Box::new(|world| {
@@ -266,9 +260,7 @@ fn platformer_controller_wall_jump() -> Scenario {
             max_frames: 90,
         })
         .then(Action::Screenshot("wall_slide".into()))
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, -1.0, true, true, false, false);
-        })))
+        .then(support::jump_player(-1.0))
         .then(Action::WaitUntil {
             label: "wall jump launched".into(),
             condition: Box::new(|world| {
@@ -321,11 +313,7 @@ fn platformer_controller_default_ability_policy() -> Scenario {
             );
         })))
         .then(Action::WaitFrames(5))
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control_with_ground_pound(
-                world, 0.0, false, false, false, false, true,
-            );
-        })))
+        .then(support::ground_pound_player(0.0))
         .then(Action::WaitUntil {
             label: "ground pound engaged".into(),
             condition: Box::new(|world| {
@@ -339,11 +327,7 @@ fn platformer_controller_default_ability_policy() -> Scenario {
             max_frames: 30,
         })
         .then(Action::Screenshot("ability_policy_ground_pound".into()))
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control_with_ground_pound(
-                world, 0.0, false, false, true, false, false,
-            );
-        })))
+        .then(support::dash_player(0.0))
         .then(Action::WaitFrames(4))
         .then(hard_assert("dash blocked while ground pound active", |world| {
             let log = world.resource::<LabMessageLog>();
@@ -392,8 +376,8 @@ fn platformer_controller_moving_platform() -> Scenario {
         .description("Ride the moving platform long enough to inherit support motion, then jump and verify horizontal carry-through.")
         .then(Action::Custom(Box::new(|world| {
             support::teleport_player(world, Vec2::new(-40.0, 4.0), Vec2::ZERO);
-            support::set_scripted_control(world, 0.0, false, false, false, false);
         })))
+        .then(support::idle_player())
         .then(Action::WaitUntil {
             label: "standing on moving platform".into(),
             condition: Box::new(|world| {
@@ -410,9 +394,7 @@ fn platformer_controller_moving_platform() -> Scenario {
         .then(assertions::custom("support entity recorded", |world| {
             support::player_state(world).is_some_and(|state| state.support_entity.is_some())
         }))
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, true, true, false, false);
-        })))
+        .then(support::jump_player(0.0))
         .then(Action::WaitUntil {
             label: "platform jump launched".into(),
             condition: Box::new(|world| {
@@ -438,8 +420,8 @@ fn platformer_controller_one_way() -> Scenario {
         .description("Jump up through a one-way platform, land on it, then drop back through it with explicit input.")
         .then(Action::Custom(Box::new(|world| {
             support::teleport_player(world, Vec2::new(-110.0, -116.0), Vec2::ZERO);
-            support::set_scripted_control(world, 0.0, true, true, false, false);
         })))
+        .then(support::jump_player(0.0))
         .then(Action::WaitUntil {
             label: "landed on one-way platform".into(),
             condition: Box::new(|world| {
@@ -454,9 +436,7 @@ fn platformer_controller_one_way() -> Scenario {
         .then(assertions::custom("one-way support recorded", |world| {
             support::player_state(world).is_some_and(|state| state.support_entity.is_some())
         }))
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, false, false, false, true);
-        })))
+        .then(support::drop_player())
         .then(Action::WaitUntil {
             label: "fell through one-way platform".into(),
             condition: Box::new(|world| {
@@ -499,9 +479,8 @@ fn platformer_controller_ground_pound() -> Scenario {
                 config,
                 ground_pound,
             );
-            // Jump first
-            support::set_scripted_control(world, 0.0, true, true, false, false);
         })))
+        .then(support::jump_player(0.0))
         .then(Action::WaitUntil {
             label: "player is airborne".into(),
             condition: Box::new(|world| {
@@ -512,9 +491,7 @@ fn platformer_controller_ground_pound() -> Scenario {
         })
         .then(Action::Screenshot("ground_pound_jump".into()))
         // Now trigger ground pound
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control_with_ground_pound(world, 0.0, false, false, false, false, true);
-        })))
+        .then(support::ground_pound_player(0.0))
         .then(Action::WaitUntil {
             label: "ground pound active".into(),
             condition: Box::new(|world| {
@@ -544,9 +521,7 @@ fn platformer_controller_ground_pound() -> Scenario {
         }))
         .then(Action::Screenshot("ground_pound_slam".into()))
         // Wait for impact
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, false, false, false, false);
-        })))
+        .then(support::idle_player())
         .then(Action::WaitUntil {
             label: "ground pound impact".into(),
             condition: Box::new(|world| {
@@ -582,8 +557,8 @@ fn platformer_controller_air_jump() -> Scenario {
                 Vec2::ZERO,
                 config,
             );
-            support::set_scripted_control(world, 0.0, false, false, false, false);
         })))
+        .then(support::idle_player())
         // Wait to settle onto ground.
         .then(Action::WaitUntil {
             label: "player grounded before air jump test".into(),
@@ -594,9 +569,7 @@ fn platformer_controller_air_jump() -> Scenario {
         })
         .then(Action::Screenshot("air_jump_grounded".into()))
         // Ground jump.
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, true, true, false, false);
-        })))
+        .then(support::jump_player(0.0))
         .then(Action::WaitUntil {
             label: "player airborne after ground jump".into(),
             condition: Box::new(|world| {
@@ -605,14 +578,10 @@ fn platformer_controller_air_jump() -> Scenario {
             }),
             max_frames: 30,
         })
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, false, false, false, false);
-        })))
+        .then(support::idle_player())
         .then(Action::WaitFrames(10))
         // Air jump while falling (release then press again).
-        .then(Action::Custom(Box::new(|world| {
-            support::set_scripted_control(world, 0.0, true, true, false, false);
-        })))
+        .then(support::jump_player(0.0))
         .then(Action::WaitUntil {
             label: "air jump consumed".into(),
             condition: Box::new(|world| {
